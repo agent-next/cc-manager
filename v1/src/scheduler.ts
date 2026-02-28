@@ -70,6 +70,18 @@ export class Scheduler {
     return [...this.tasks.values()];
   }
 
+  getQueuePosition(taskId: string): number {
+    const idx = this.queue.findIndex((t) => t.id === taskId);
+    if (idx !== -1) return idx + 1;
+    const task = this.tasks.get(taskId);
+    if (task?.status === "running") return 0;
+    return -1;
+  }
+
+  getQueueDepth(): number {
+    return this.queue.length;
+  }
+
   cancel(id: string): boolean {
     const task = this.tasks.get(id);
     if (!task || task.status !== "pending") return false;
