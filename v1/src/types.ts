@@ -1,5 +1,5 @@
 export type TaskStatus = "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
-export type TaskPriority = "low" | "normal" | "high";
+export type TaskPriority = "urgent" | "high" | "normal" | "low";
 
 export interface Task {
   id: string;
@@ -65,6 +65,13 @@ export interface Config {
   maxBudget: number;
   model: string;
   systemPrompt: string;
+}
+
+export interface TaskCreateInput {
+  prompt: string;
+  timeout?: number;
+  maxBudget?: number;
+  priority?: Task["priority"];
 }
 
 export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl">>): Task {
