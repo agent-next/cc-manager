@@ -370,15 +370,38 @@ function render(stats, tasks, workers) {
     tEl.innerHTML = '<tr class="empty-row"><td colspan="7">No tasks yet. Submit a prompt above to get started.</td></tr>';
     return;
   }
+
+  // Track start times for running tasks; clean up finished ones
+  const runningIds = new Set();
+  sorted.forEach(t => {
+    if (t.status === 'running') {
+      runningIds.add(t.id);
+      if (!taskStartTimes.has(t.id)) {
+        // Prefer explicit startedAt, fall back to createdAt, then now
+        const ms = t.startedAt  ? new Date(t.startedAt).getTime()
+                 : t.createdAt  ? new Date(t.createdAt).getTime()
+                 : Date.now();
+        taskStartTimes.set(t.id, ms);
+      }
+    }
+  });
+  for (const id of taskStartTimes.keys()) {
+    if (!runningIds.has(id)) taskStartTimes.delete(id);
+  }
+
   tEl.innerHTML = sorted.map(t => {
     const actions = [`<button class="btn-view" onclick="viewTask('${t.id}')">View</button>`];
     if (t.status === 'pending') {
       actions.push(`<button class="btn-cancel" onclick="cancelTask('${t.id}')">Cancel</button>`);
     }
+    // For running tasks show a live elapsed-time badge (tickTimers() updates it every second)
+    const statusBadge = t.status === 'running'
+      ? `<span class="status status-running" data-running-task="${t.id}">Running ${getElapsed(t.id)}s</span>`
+      : `<span class="status status-${t.status}">${t.status}</span>`;
     return `<tr>
       <td><code>${t.id}</code></td>
       <td class="prompt-cell" title="${esc(t.prompt)}">${esc(t.prompt.slice(0, 80))}</td>
-      <td><span class="status status-${t.status}">${t.status}</span></td>
+      <td>${statusBadge}</td>
       <td>${t.worktree ?? '-'}</td>
       <td>$${(t.costUsd ?? 0).toFixed(3)}</td>
       <td>${t.durationMs ? (t.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
@@ -480,6 +503,24 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
 });
 
+// ── Running-task elapsed timers ────────────────────────────────────────────
+const taskStartTimes = new Map(); // taskId -> startTimestamp (ms)
+
+function getElapsed(taskId) {
+  const start = taskStartTimes.get(taskId);
+  return start != null ? Math.floor((Date.now() - start) / 1000) : 0;
+}
+
+function tickTimers() {
+  document.querySelectorAll('[data-running-task]').forEach(el => {
+    const elapsed = getElapsed(el.dataset.runningTask);
+    el.textContent = `Running ${elapsed}s`;
+  });
+}
+
+// Tick every second to update elapsed time in running-task rows
+setInterval(tickTimers, 1000);
+
 // ── SSE for real-time updates ──────────────────────────────────────────────
 function connectSSE() {
   const es = new EventSource('/api/events');
@@ -488,7 +529,8 @@ function connectSSE() {
 }
 
 connectSSE();
-setInterval(refresh, 3000);
+// Poll every 10 s as a safety net to catch any missed SSE events
+setInterval(refresh, 10000);
 refresh();
 </script>
 </body>
