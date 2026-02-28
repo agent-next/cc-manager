@@ -3,6 +3,8 @@
 [![CI](https://github.com/agent-next/cc-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-next/cc-manager/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+> I need a Boris.
+
 A multi-agent orchestrator that runs parallel coding agents in git worktrees. Supports Claude Agent SDK, Claude CLI, Codex CLI, and any terminal agent. Submit tasks via REST API, monitor in real-time via SSE, and agents auto-commit and merge to `main`.
 
 ```
