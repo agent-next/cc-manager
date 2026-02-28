@@ -184,11 +184,20 @@ export class WebServer {
       return c.json(errors);
     });
 
+    // API: search tasks by keyword
+    app.get("/api/tasks/search", (c) => {
+      const query = c.req.query("q") ?? "";
+      const tasks = this.store.search(query);
+      return c.json(tasks);
+    });
+
     // API: task detail
     app.get("/api/tasks/:id", (c) => {
-      const task = this._scheduler.getTask(c.req.param("id"));
+      const id = c.req.param("id");
+      const task = this._scheduler.getTask(id);
       if (!task) return c.json({ error: "not found" }, 404);
-      return c.json(task);
+      const queuePosition = this._scheduler.getQueuePosition(id);
+      return c.json({ ...task, queuePosition });
     });
 
     // API: task output (plain text for easy curl consumption)
