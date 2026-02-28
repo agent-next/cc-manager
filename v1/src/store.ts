@@ -114,6 +114,38 @@ export class Store {
     runAll(tasks);
   }
 
+  /** Wraps {@link fn} in a SQLite transaction and executes it atomically. */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  /**
+   * Saves multiple tasks in a single transaction for efficiency.
+   * Use instead of calling save() in a loop when inserting/replacing many tasks at once.
+   */
+  saveBatch(tasks: Task[]): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO tasks
+      (id, prompt, status, worktree, output, error, events, created_at,
+       started_at, completed_at, timeout, max_budget, cost_usd,
+       token_input, token_output, duration_ms, retry_count, max_retries, priority, tags)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.transaction(() => {
+      for (const task of tasks) {
+        stmt.run(
+          task.id, task.prompt, task.status, task.worktree ?? null,
+          task.output, task.error, JSON.stringify(task.events),
+          task.createdAt, task.startedAt ?? null, task.completedAt ?? null,
+          task.timeout, task.maxBudget, task.costUsd,
+          task.tokenInput, task.tokenOutput, task.durationMs, task.retryCount, task.maxRetries,
+          task.priority ?? "normal",
+          JSON.stringify(task.tags ?? []),
+        );
+      }
+    });
+  }
+
   /**
    * Update only the specified fields of a task using a targeted SQL SET clause.
    * More efficient than save() when only a few fields change.
