@@ -1,13 +1,38 @@
 import type { Task, TaskEvent } from "./types.js";
 import { log } from "./logger.js";
+import { execSync } from "child_process";
 
 type EventCallback = (event: Record<string, unknown>) => void;
 
+interface RunningTaskEntry {
+  id: string;
+  startMs: number;
+  costUsd: number;
+}
+
+export interface RunningTaskInfo {
+  id: string;
+  elapsedMs: number;
+  costUsd: number;
+}
+
 export class AgentRunner {
+  private readonly _runningTasks = new Map<string, RunningTaskEntry>();
+
   constructor(
     private model: string = "claude-sonnet-4-6",
     private systemPrompt: string = "",
   ) {}
+
+  /** Returns info about all tasks currently being executed by this runner. */
+  getRunningTasks(): RunningTaskInfo[] {
+    const now = Date.now();
+    return Array.from(this._runningTasks.values()).map((entry) => ({
+      id: entry.id,
+      elapsedMs: now - entry.startMs,
+      costUsd: entry.costUsd,
+    }));
+  }
 
   async run(task: Task, cwd: string, onEvent?: EventCallback): Promise<Task> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk").catch(() => {
@@ -19,6 +44,8 @@ export class AgentRunner {
     task.status = "running";
     task.startedAt = new Date().toISOString();
     const startMs = Date.now();
+
+    this._runningTasks.set(task.id, { id: task.id, startMs, costUsd: 0 });
 
     log("info", "task start", { taskId: task.id, worker: task.worktree });
     onEvent?.({ type: "task_started", taskId: task.id, worker: task.worktree });
@@ -94,6 +121,17 @@ export class AgentRunner {
             .join("");
           if (text) {
             onEvent?.({ type: "task_log", taskId: task.id, text });
+
+            // Detect compilation errors mentioned in agent output
+            if (/error TS\d+|compilation (failed|error)|tsc.*error|\berror\b.*\.ts\(\d+/i.test(text)) {
+              const compileErrEvt: TaskEvent = {
+                type: "compilation_error",
+                timestamp: new Date().toISOString(),
+                data: { snippet: text.slice(0, 500) },
+              };
+              task.events.push(compileErrEvt);
+              onEvent?.({ type: "task_event", taskId: task.id, event: compileErrEvt });
+            }
           }
         }
 
@@ -102,6 +140,10 @@ export class AgentRunner {
           task.costUsd = msg.total_cost_usd ?? 0;
           task.tokenInput = msg.usage?.input_tokens ?? 0;
           task.tokenOutput = msg.usage?.output_tokens ?? 0;
+
+          // Update live cost in running-task tracker
+          const entry = this._runningTasks.get(task.id);
+          if (entry) entry.costUsd = task.costUsd;
 
           if (msg.subtype === "success") {
             task.status = "success";
@@ -145,6 +187,23 @@ export class AgentRunner {
       task.durationMs = Date.now() - startMs;
     } finally {
       if (timer) clearTimeout(timer);
+      this._runningTasks.delete(task.id);
+    }
+
+    // Capture git diff for any commits made by the agent in this worktree
+    try {
+      const diff = execSync("git diff HEAD~1..HEAD", { cwd, encoding: "utf8" });
+      if (diff.trim()) {
+        const diffEvt: TaskEvent = {
+          type: "git_diff",
+          timestamp: new Date().toISOString(),
+          data: { diff },
+        };
+        task.events.push(diffEvt);
+        onEvent?.({ type: "task_event", taskId: task.id, event: diffEvt });
+      }
+    } catch (_e: unknown) {
+      // No commits made, insufficient history, or git unavailable – skip silently
     }
 
     task.completedAt = new Date().toISOString();
