@@ -10,6 +10,31 @@ const execAsync = promisify(execCb);
 type EventCallback = (event: Record<string, unknown>) => void;
 
 const MAX_EVENTS = 200;
+const SIGKILL_GRACE_MS = 5_000;
+
+interface ChildTimers {
+  clear(): void;
+}
+
+/** Wire timeout + SIGTERM → SIGKILL escalation for a child process. */
+function setupChildTimeout(child: ChildProcess, task: Task): ChildTimers {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  if (task.timeout > 0) {
+    timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), SIGKILL_GRACE_MS);
+      task.status = "timeout";
+      task.error = `timeout: task exceeded ${task.timeout}s`;
+    }, task.timeout * 1000);
+  }
+  return {
+    clear() {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+    },
+  };
+}
 
 interface RunningTaskEntry {
   id: string;
@@ -294,17 +319,7 @@ export class AgentRunner {
 
       let stdout = "";
       let stderr = "";
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let killTimer: ReturnType<typeof setTimeout> | undefined;
-
-      if (task.timeout > 0) {
-        timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
-          task.status = "timeout";
-          task.error = `timeout: task exceeded ${task.timeout}s`;
-        }, task.timeout * 1000);
-      }
+      const timers = setupChildTimeout(child, task);
 
       child.stdout.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
@@ -325,8 +340,7 @@ export class AgentRunner {
       });
 
       child.on("close", (code) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -348,8 +362,7 @@ export class AgentRunner {
       });
 
       child.on("error", (err) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         reject(err);
       });
     });
@@ -435,17 +448,7 @@ export class AgentRunner {
 
       let stdout = "";
       let stderr = "";
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let killTimer: ReturnType<typeof setTimeout> | undefined;
-
-      if (task.timeout > 0) {
-        timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
-          task.status = "timeout";
-          task.error = `timeout: task exceeded ${task.timeout}s`;
-        }, task.timeout * 1000);
-      }
+      const timers = setupChildTimeout(child, task);
 
       child.stdout.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
@@ -466,8 +469,7 @@ export class AgentRunner {
       });
 
       child.on("close", (code) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -489,8 +491,7 @@ export class AgentRunner {
       });
 
       child.on("error", (err) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         reject(err);
       });
     });
@@ -557,17 +558,7 @@ export class AgentRunner {
 
       let stdout = "";
       let stderr = "";
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let killTimer: ReturnType<typeof setTimeout> | undefined;
-
-      if (task.timeout > 0) {
-        timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
-          task.status = "timeout";
-          task.error = `timeout: task exceeded ${task.timeout}s`;
-        }, task.timeout * 1000);
-      }
+      const timers = setupChildTimeout(child, task);
 
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk.toString();
@@ -579,8 +570,7 @@ export class AgentRunner {
       });
 
       child.on("close", (code) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -601,8 +591,7 @@ export class AgentRunner {
       });
 
       child.on("error", (err) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
+        timers.clear();
         reject(err);
       });
     });

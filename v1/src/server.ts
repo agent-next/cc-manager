@@ -70,15 +70,15 @@ export class WebServer {
     }
   }
 
-  private checkRateLimit(ip: string): { allowed: boolean; retryAfterSecs: number } {
+  private checkRateLimit(ip: string, cost = 1): { allowed: boolean; retryAfterSecs: number } {
     const now = Date.now();
     let entry = this.rateLimitStore.get(ip);
     if (!entry || entry.resetAt <= now) {
-      entry = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
+      entry = { count: cost, resetAt: now + RATE_LIMIT_WINDOW_MS };
       this.rateLimitStore.set(ip, entry);
       return { allowed: true, retryAfterSecs: 0 };
     }
-    entry.count += 1;
+    entry.count += cost;
     if (entry.count > RATE_LIMIT_MAX) {
       const retryAfterSecs = Math.ceil((entry.resetAt - now) / 1000);
       return { allowed: false, retryAfterSecs };
@@ -306,16 +306,13 @@ export class WebServer {
       }
       // Rate limit: count each prompt in the batch against the limit
       const batchSize = Array.isArray(body.prompts) ? body.prompts.length : 1;
-      const batchIp = "direct";
-      for (let i = 0; i < batchSize; i++) {
-        const { allowed, retryAfterSecs } = this.checkRateLimit(batchIp);
-        if (!allowed) {
-          return c.json(
-            { error: "Too Many Requests" },
-            429,
-            { "Retry-After": String(retryAfterSecs) },
-          );
-        }
+      const { allowed, retryAfterSecs } = this.checkRateLimit("direct", batchSize);
+      if (!allowed) {
+        return c.json(
+          { error: "Too Many Requests" },
+          429,
+          { "Retry-After": String(retryAfterSecs) },
+        );
       }
       if (!Array.isArray(body.prompts) || body.prompts.length === 0) {
         return c.json({ error: "prompts must be a non-empty array" }, 400);
