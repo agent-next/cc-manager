@@ -44,6 +44,34 @@ export class AgentRunner {
     }));
   }
 
+  buildSystemPrompt(task: Task): string {
+    const parts: string[] = [];
+    const lower = task.prompt.toLowerCase();
+
+    // Always-included instructions
+    parts.push("- Always use `.js` extensions in import paths (e.g. `import { foo } from \"./bar.js\"`).");
+    parts.push("- After making changes, run `npx tsc` to verify there are no type errors.");
+    parts.push("- Stage and commit all changes with `git add -A && git commit -m \"feat: <brief summary>\"`.");
+
+    // Conditional: test or spec
+    if (/\btest\b|\bspec\b/.test(lower)) {
+      parts.push("- Use `node:test` as the test runner and `assert/strict` for assertions.");
+    }
+
+    // Conditional: dashboard or html
+    if (/\bdashboard\b|\bhtml\b/.test(lower)) {
+      parts.push("- Keep JavaScript vanilla (no frameworks). Match the existing dark theme.");
+    }
+
+    // Conditional: specific file mention
+    const fileMatch = task.prompt.match(/\b([\w./\\-]+\.(?:ts|js|tsx|jsx|mts|mjs|cjs|html|css|json|md|py|sh))\b/i);
+    if (fileMatch) {
+      parts.push(`- Only modify the file \`${fileMatch[1]}\`. Do not touch any other files.`);
+    }
+
+    return parts.join("\n");
+  }
+
   async run(task: Task, cwd: string, onEvent?: EventCallback): Promise<Task> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk").catch(() => {
       throw new Error(
