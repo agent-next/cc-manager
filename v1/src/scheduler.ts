@@ -178,7 +178,7 @@ export class Scheduler {
     };
   }
 
-  getHistoricalInsights() {
+  getDetailedInsights() {
     const daily = this.store.getDailyStats();
     const overall = this.store.stats();
     const avgDurationMs = this.getAverageDuration();
@@ -200,6 +200,24 @@ export class Scheduler {
         avgCostPerTask: overall.total > 0 ? overall.totalCost / overall.total : 0,
         peakDay: daily.length > 0 ? daily.reduce((a, b) => (a.count >= b.count ? a : b)).date : null,
       },
+    };
+  }
+
+  analyzeRound(taskIds: string[]): Record<string, unknown> {
+    const tasks = taskIds.map((id) => this.getTask(id)).filter((t): t is Task => t !== undefined);
+    const successCount = tasks.filter((t) => t.status === "success").length;
+    const failedCount = tasks.filter((t) => t.status === "failed").length;
+    const timeoutCount = tasks.filter((t) => t.status === "timeout").length;
+    const totalCost = tasks.reduce((sum, t) => sum + t.costUsd, 0);
+    const avgDurationMs = tasks.length > 0 ? tasks.reduce((sum, t) => sum + t.durationMs, 0) / tasks.length : 0;
+    return {
+      taskCount: tasks.length,
+      successCount,
+      failedCount,
+      timeoutCount,
+      totalCost,
+      avgDurationMs,
+      successRate: tasks.length > 0 ? successCount / tasks.length : 0,
     };
   }
 

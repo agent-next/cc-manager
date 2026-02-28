@@ -86,6 +86,14 @@ export interface PerformanceMetrics {
   p90DurationMs: number;
 }
 
+export interface EvolutionEntry {
+  id: string;
+  roundNumber: number;
+  taskIds: string[];
+  analysis: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface TaskCreateInput {
   prompt: string;
   timeout?: number;

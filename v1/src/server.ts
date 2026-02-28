@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { Scheduler } from "./scheduler.js";
 import type { Store } from "./store.js";
 import type { WorktreePool } from "./worktree-pool.js";
+import type { EvolutionEntry } from "./types.js";
 import { log } from "./logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -398,6 +399,34 @@ export class WebServer {
           await stream.sleep(15000);
         }
       });
+    });
+
+    // API: evolution log
+    app.get("/api/evolution/log", (c) => {
+      return c.json(this.store.getEvolutionLog());
+    });
+
+    // API: analyze a round of tasks and save the result as an EvolutionEntry
+    app.post("/api/evolution/analyze", async (c) => {
+      let body: { taskIds?: unknown };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "bad json" }, 400);
+      }
+      if (!Array.isArray(body.taskIds) || body.taskIds.length === 0) {
+        return c.json({ error: "taskIds must be a non-empty array" }, 400);
+      }
+      const analysis = this._scheduler.analyzeRound(body.taskIds as string[]);
+      const entry: EvolutionEntry = {
+        id: crypto.randomUUID(),
+        roundNumber: Date.now(),
+        taskIds: body.taskIds as string[],
+        analysis,
+        createdAt: new Date().toISOString(),
+      };
+      this.store.saveEvolution(entry);
+      return c.json(entry);
     });
 
     // API: self-documenting endpoint listing

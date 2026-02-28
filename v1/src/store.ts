@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import path from "node:path";
-import type { Task } from "./types.js";
+import type { Task, EvolutionEntry } from "./types.js";
 
 export class Store {
   private db: Database.Database;
@@ -65,6 +65,15 @@ export class Store {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority)"
     );
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS evolution_log (
+        id TEXT PRIMARY KEY,
+        round_number INTEGER NOT NULL,
+        task_ids TEXT NOT NULL DEFAULT '[]',
+        analysis TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      )
+    `);
   }
 
   save(task: Task): void {
@@ -373,6 +382,32 @@ export class Store {
       count: r.count as number,
       cost: r.cost as number,
       successRate: r.count > 0 ? (r.success_count as number) / (r.count as number) : 0,
+    }));
+  }
+
+  saveEvolution(entry: EvolutionEntry): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO evolution_log (id, round_number, task_ids, analysis, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.roundNumber,
+      JSON.stringify(entry.taskIds),
+      JSON.stringify(entry.analysis),
+      entry.createdAt,
+    );
+  }
+
+  getEvolutionLog(): EvolutionEntry[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM evolution_log ORDER BY created_at DESC"
+    ).all() as any[];
+    return rows.map((r) => ({
+      id: r.id as string,
+      roundNumber: r.round_number as number,
+      taskIds: JSON.parse(r.task_ids || "[]") as string[],
+      analysis: JSON.parse(r.analysis || "{}") as Record<string, unknown>,
+      createdAt: r.created_at as string,
     }));
   }
 
