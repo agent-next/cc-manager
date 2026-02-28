@@ -62,8 +62,31 @@ export class WebServer {
     app.get("/api/stats", (c) => c.json(this._scheduler.getStats()));
 
     // API: list tasks
+    // Query params: ?status=running, ?q=keyword, ?limit=10
     app.get("/api/tasks", (c) => {
-      const tasks = this._scheduler.listTasks().map((t) => ({
+      const statusFilter = c.req.query("status");
+      const keyword = c.req.query("q");
+      const limitParam = c.req.query("limit");
+
+      let tasks = this._scheduler.listTasks();
+
+      if (statusFilter) {
+        tasks = tasks.filter((t) => t.status === statusFilter);
+      }
+
+      if (keyword) {
+        const lower = keyword.toLowerCase();
+        tasks = tasks.filter((t) => t.prompt.toLowerCase().includes(lower));
+      }
+
+      if (limitParam !== undefined) {
+        const limit = parseInt(limitParam, 10);
+        if (!isNaN(limit) && limit > 0) {
+          tasks = tasks.slice(0, limit);
+        }
+      }
+
+      const result = tasks.map((t) => ({
         id: t.id,
         prompt: t.prompt.slice(0, 200),
         status: t.status,
@@ -73,7 +96,7 @@ export class WebServer {
         completedAt: t.completedAt,
         durationMs: t.durationMs,
       }));
-      return c.json(tasks);
+      return c.json(result);
     });
 
     // API: task detail
