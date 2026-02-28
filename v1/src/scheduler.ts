@@ -17,6 +17,7 @@ export class Scheduler {
   private recoveryInterval?: ReturnType<typeof setInterval>;
   private progressIntervals = new Map<string, ReturnType<typeof setInterval>>();
   private dispatchResolve?: () => void;
+  private abortedTasks = new Set<string>();
 
   setTotalBudgetLimit(usd: number): void {
     this.totalBudgetLimit = usd;
@@ -305,26 +306,10 @@ export class Scheduler {
         timeoutS: task.timeout,
       });
 
-      // Mark the task as timed out
-      task.status = "timeout";
-      task.error = "Task exceeded timeout + grace period and was forcefully recovered";
-      task.completedAt = new Date().toISOString();
-
-      // Clear any outstanding progress-reporting interval for this task
-      const interval = this.progressIntervals.get(task.id);
-      if (interval !== undefined) {
-        clearInterval(interval);
-        this.progressIntervals.delete(task.id);
-      }
-
-      // Release the worker back to the pool without merging
-      this.activeWorkers.delete(workerName);
-      await this.pool.release(workerName, false);
-
-      // Persist, notify, and wake the dispatch loop
-      this.store.save(task);
-      this.onEvent?.({ type: "task_final", taskId: task.id, status: task.status });
-      this.triggerDispatch();
+      // Signal executeAndRelease() to treat this task as timed-out.
+      // Do NOT release the pool here — executeAndRelease owns that lifecycle.
+      this.abortedTasks.add(task.id);
+      this.runner.abort(task.id);
     }
   }
 
@@ -427,6 +412,16 @@ export class Scheduler {
       if (task.dependsOn) {
         const dep = this.tasks.get(task.dependsOn) ?? this.store.get(task.dependsOn) ?? undefined;
         if (dep?.status !== "success") {
+          // If dependency is in a terminal failure state (or missing), fail this task
+          if (!dep || dep.status === "failed" || dep.status === "timeout" || dep.status === "cancelled") {
+            task.status = "failed";
+            task.error = `dependency ${task.dependsOn} is ${dep?.status ?? "missing"}`;
+            task.completedAt = new Date().toISOString();
+            this.store.save(task);
+            this.onEvent?.({ type: "task_final", taskId: task.id, status: task.status });
+            continue;
+          }
+          // Still pending/running — re-queue and wait
           log("info", "task waiting on dependency", { taskId: task.id, dependsOn: task.dependsOn });
           this.queue.push(task);
           await this.waitForDispatch(1_000);
@@ -480,6 +475,13 @@ export class Scheduler {
       if (interval !== undefined) {
         clearInterval(interval);
         this.progressIntervals.delete(task.id);
+      }
+      // If stale recovery flagged this task, force timeout status and skip retry
+      if (this.abortedTasks.has(task.id)) {
+        this.abortedTasks.delete(task.id);
+        task.status = "timeout";
+        task.error = "Task exceeded timeout + grace period and was forcefully recovered";
+        task.completedAt = new Date().toISOString();
       }
       // Retry logic: re-queue failed tasks (not timeout/cancelled) up to maxRetries times
       if (task.status === "failed" && task.retryCount < task.maxRetries) {
