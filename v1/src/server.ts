@@ -9,16 +9,48 @@ import type { WorktreePool } from "./worktree-pool.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_CLEANUP_MS = 5 * 60_000; // 5 minutes
+
 export class WebServer {
   private app = new Hono();
   private sseClients = new Set<(data: string) => void>();
   private _scheduler!: Scheduler;
+  private rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 
   constructor(
     private pool: WorktreePool,
     private port: number,
   ) {
     this.setupRoutes();
+    // Periodically remove expired rate-limit entries
+    setInterval(() => this.cleanupRateLimit(), RATE_LIMIT_CLEANUP_MS).unref();
+  }
+
+  private cleanupRateLimit(): void {
+    const now = Date.now();
+    for (const [ip, entry] of this.rateLimitStore) {
+      if (entry.resetAt <= now) {
+        this.rateLimitStore.delete(ip);
+      }
+    }
+  }
+
+  private checkRateLimit(ip: string): { allowed: boolean; retryAfterSecs: number } {
+    const now = Date.now();
+    let entry = this.rateLimitStore.get(ip);
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
+      this.rateLimitStore.set(ip, entry);
+      return { allowed: true, retryAfterSecs: 0 };
+    }
+    entry.count += 1;
+    if (entry.count > RATE_LIMIT_MAX) {
+      const retryAfterSecs = Math.ceil((entry.resetAt - now) / 1000);
+      return { allowed: false, retryAfterSecs };
+    }
+    return { allowed: true, retryAfterSecs: 0 };
   }
 
   setScheduler(scheduler: Scheduler): void {
@@ -150,6 +182,19 @@ export class WebServer {
 
     // API: submit task
     app.post("/api/tasks", async (c) => {
+      const ip =
+        c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+        c.req.header("x-real-ip") ??
+        "unknown";
+      const { allowed, retryAfterSecs } = this.checkRateLimit(ip);
+      if (!allowed) {
+        return c.json(
+          { error: "Too Many Requests" },
+          429,
+          { "Retry-After": String(retryAfterSecs) },
+        );
+      }
+
       let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown };
       try {
         body = await c.req.json();
