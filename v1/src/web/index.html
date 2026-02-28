@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CC-Manager</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { font-size: 1.4em; margin-bottom: 20px; color: #58a6ff; display: flex; align-items: center; gap: 10px; }
+  h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .card .label { font-size: 0.75em; color: #8b949e; text-transform: uppercase; }
+  .card .value { font-size: 1.8em; font-weight: 600; margin-top: 4px; }
+  .submit { display: flex; gap: 8px; margin-bottom: 24px; }
+  .submit textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 10px; border-radius: 6px; resize: vertical; min-height: 60px; font-family: inherit; font-size: 0.9em; }
+  .submit textarea:focus { border-color: #58a6ff; outline: none; }
+  .submit button { background: #238636; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+  .submit button:hover { background: #2ea043; }
+  .workers { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  .worker { padding: 6px 12px; border-radius: 6px; font-size: 0.85em; background: #1a3a1a; color: #3fb950; border: 1px solid #238636; }
+  .worker.busy { background: #1f3a5f; color: #58a6ff; border-color: #1f6feb; animation: pulse 2s infinite; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 0.9em; }
+  th { color: #8b949e; font-size: 0.75em; text-transform: uppercase; }
+  .status { padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 600; display: inline-block; }
+  .status-pending { background: #30363d; color: #8b949e; }
+  .status-running { background: #1f3a5f; color: #58a6ff; }
+  .status-success { background: #1a3a1a; color: #3fb950; }
+  .status-failed { background: #3d1a1a; color: #f85149; }
+  .status-timeout { background: #3d2e1a; color: #d29922; }
+  .status-cancelled { background: #30363d; color: #8b949e; }
+  .btn-cancel { background: none; border: 1px solid #f85149; color: #f85149; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }
+  .btn-cancel:hover { background: #3d1a1a; }
+  .btn-view { background: none; border: 1px solid #58a6ff; color: #58a6ff; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; margin-right: 4px; }
+  .btn-view:hover { background: #1f3a5f; }
+  .prompt-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Modal */
+  .modal-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 100; }
+  .modal-bg.show { display: flex; }
+  .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; width: 90%; max-width: 700px; max-height: 80vh; overflow: auto; padding: 24px; }
+  .modal h2 { color: #58a6ff; margin-bottom: 16px; font-size: 1.1em; }
+  .modal .close { float: right; background: none; border: none; color: #8b949e; font-size: 1.5em; cursor: pointer; }
+  .modal pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-size: 0.85em; white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow: auto; }
+  .modal .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; font-size: 0.85em; }
+  .modal .meta span { color: #8b949e; }
+  .section-title { color: #8b949e; font-size: 0.75em; text-transform: uppercase; margin: 16px 0 8px 0; }
+</style>
+</head>
+<body>
+<h1><span class="dot"></span> CC-Manager</h1>
+
+<div class="grid" id="stats">
+  <div class="card"><div class="label">Queue</div><div class="value" id="s-queue">0</div></div>
+  <div class="card"><div class="label">Running</div><div class="value" id="s-running">0</div></div>
+  <div class="card"><div class="label">Success</div><div class="value" id="s-success">0</div></div>
+  <div class="card"><div class="label">Failed</div><div class="value" id="s-failed">0</div></div>
+  <div class="card"><div class="label">Total</div><div class="value" id="s-total">0</div></div>
+  <div class="card"><div class="label">Cost (USD)</div><div class="value" id="s-cost">$0</div></div>
+</div>
+
+<div class="workers" id="workers"></div>
+
+<div class="submit">
+  <textarea id="prompt" placeholder="Enter task prompt..." rows="2"></textarea>
+  <button onclick="submitTask()">Submit</button>
+</div>
+
+<table>
+  <thead><tr><th>ID</th><th>Prompt</th><th>Status</th><th>Worker</th><th>Cost</th><th>Duration</th><th>Actions</th></tr></thead>
+  <tbody id="tasks"></tbody>
+</table>
+
+<!-- Task Detail Modal -->
+<div class="modal-bg" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <button class="close" onclick="closeModal()">&times;</button>
+    <h2 id="modal-title">Task Detail</h2>
+    <div class="meta" id="modal-meta"></div>
+    <div class="section-title">Prompt</div>
+    <pre id="modal-prompt"></pre>
+    <div class="section-title">Output</div>
+    <pre id="modal-output"></pre>
+    <div id="modal-error-section" style="display:none">
+      <div class="section-title">Error</div>
+      <pre id="modal-error" style="color:#f85149"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+let lastData = {};
+
+async function refresh() {
+  try {
+    const [stats, tasks, workers] = await Promise.all([
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/tasks').then(r => r.json()),
+      fetch('/api/workers').then(r => r.json()),
+    ]);
+    lastData = { stats, tasks, workers };
+    render(stats, tasks, workers);
+  } catch(e) { console.error('refresh failed:', e); }
+}
+
+function render(stats, tasks, workers) {
+  document.getElementById('s-total').textContent = stats.total;
+  document.getElementById('s-success').textContent = stats.byStatus?.success ?? 0;
+  document.getElementById('s-failed').textContent = (stats.byStatus?.failed ?? 0) + (stats.byStatus?.timeout ?? 0);
+  document.getElementById('s-running').textContent = stats.activeWorkers;
+  document.getElementById('s-queue').textContent = stats.queueSize;
+  document.getElementById('s-cost').textContent = '$' + (stats.totalCost ?? 0).toFixed(2);
+
+  const wEl = document.getElementById('workers');
+  wEl.innerHTML = workers.map(w =>
+    `<div class="worker ${w.busy ? 'busy' : ''}">${w.name}${w.currentTask ? ': ' + w.currentTask : ''}</div>`
+  ).join('');
+
+  const tEl = document.getElementById('tasks');
+  tEl.innerHTML = tasks.map(t => {
+    const actions = [];
+    actions.push(`<button class="btn-view" onclick="viewTask('${t.id}')">View</button>`);
+    if (t.status === 'pending') {
+      actions.push(`<button class="btn-cancel" onclick="cancelTask('${t.id}')">Cancel</button>`);
+    }
+    return `<tr>
+      <td><code>${t.id}</code></td>
+      <td class="prompt-cell" title="${esc(t.prompt)}">${esc(t.prompt.slice(0, 80))}</td>
+      <td><span class="status status-${t.status}">${t.status}</span></td>
+      <td>${t.worktree ?? '-'}</td>
+      <td>$${(t.costUsd ?? 0).toFixed(3)}</td>
+      <td>${t.durationMs ? (t.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
+      <td>${actions.join('')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function submitTask() {
+  const el = document.getElementById('prompt');
+  const prompt = el.value.trim();
+  if (!prompt) return;
+  await fetch('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  el.value = '';
+  refresh();
+}
+
+async function cancelTask(id) {
+  await fetch('/api/tasks/' + id, { method: 'DELETE' });
+  refresh();
+}
+
+async function viewTask(id) {
+  const task = await fetch('/api/tasks/' + id).then(r => r.json());
+  if (task.error === 'not found') return;
+  document.getElementById('modal-title').textContent = 'Task ' + task.id;
+  document.getElementById('modal-meta').innerHTML = `
+    <div><span>Status:</span> <span class="status status-${task.status}">${task.status}</span></div>
+    <div><span>Worker:</span> ${task.worktree ?? '-'}</div>
+    <div><span>Cost:</span> $${(task.costUsd ?? 0).toFixed(4)}</div>
+    <div><span>Duration:</span> ${task.durationMs ? (task.durationMs/1000).toFixed(1)+'s' : '-'}</div>
+    <div><span>Tokens In:</span> ${task.tokenInput?.toLocaleString() ?? 0}</div>
+    <div><span>Tokens Out:</span> ${task.tokenOutput?.toLocaleString() ?? 0}</div>
+    <div><span>Created:</span> ${new Date(task.createdAt).toLocaleString()}</div>
+    <div><span>Completed:</span> ${task.completedAt ? new Date(task.completedAt).toLocaleString() : '-'}</div>
+  `;
+  document.getElementById('modal-prompt').textContent = task.prompt;
+  document.getElementById('modal-output').textContent = task.output || '(no output yet)';
+  const errSection = document.getElementById('modal-error-section');
+  if (task.error) {
+    errSection.style.display = 'block';
+    document.getElementById('modal-error').textContent = task.error;
+  } else {
+    errSection.style.display = 'none';
+  }
+  document.getElementById('modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('show');
+}
+
+// SSE for real-time updates
+function connectSSE() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (e) => {
+    if (e.data) refresh();
+  };
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// Keyboard shortcut: Ctrl+Enter to submit
+document.getElementById('prompt').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    submitTask();
+  }
+});
+
+// Escape to close modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+connectSSE();
+setInterval(refresh, 3000);
+refresh();
+</script>
+</body>
+</html>
