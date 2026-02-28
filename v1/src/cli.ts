@@ -8,8 +8,12 @@ const BASE_URL = process.env.CC_MANAGER_URL ?? "http://localhost:8080";
 
 // ── Helpers ──
 
+function getBaseUrl(): string {
+  return program.opts().url ?? BASE_URL;
+}
+
 async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${BASE_URL}${path}`;
+  const url = `${getBaseUrl()}${path}`;
   const res = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
