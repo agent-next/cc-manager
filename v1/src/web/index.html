@@ -113,7 +113,7 @@
   .cost-item .ci-label { font-size: 0.72em; color: var(--text-muted); text-transform: uppercase; }
   .cost-item .ci-value { font-size: 1.05em; font-weight: 600; color: var(--accent); }
 
-  /* ── Workers ── */
+  /* ── Workers (legacy chips – kept for compat) ── */
   .workers { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
   .worker {
     padding: 5px 12px; border-radius: 6px; font-size: 0.85em;
@@ -124,6 +124,64 @@
     background: var(--worker-busy-bg); color: var(--worker-busy-fg);
     border-color: var(--worker-busy-border); animation: pulse 2s infinite;
   }
+
+  /* ── Worker Status Panel ── */
+  .worker-panel {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 18px; margin-bottom: 16px;
+  }
+  .worker-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  }
+  .worker-panel-title {
+    font-size: 0.8em; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .worker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 8px;
+  }
+  .worker-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 4px;
+    transition: border-color 0.15s;
+  }
+  .worker-card.idle { border-color: var(--worker-idle-border); }
+  .worker-card.busy { border-color: var(--worker-busy-border); background: var(--worker-busy-bg); }
+  .worker-card-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .worker-name { font-size: 0.88em; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .worker-badge {
+    font-size: 0.7em; font-weight: 700; padding: 2px 7px;
+    border-radius: 10px; white-space: nowrap; flex-shrink: 0;
+  }
+  .worker-badge.idle {
+    background: var(--worker-idle-bg); color: var(--worker-idle-fg);
+    border: 1px solid var(--worker-idle-border);
+  }
+  .worker-badge.busy {
+    background: var(--worker-busy-bg); color: var(--worker-busy-fg);
+    border: 1px solid var(--worker-busy-border); animation: pulse 2s infinite;
+  }
+  .worker-meta { font-size: 0.76em; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .worker-meta b { color: var(--text); font-weight: 500; }
+  .worker-empty { font-size: 0.85em; color: var(--text-muted); padding: 4px 0; }
+
+  /* ── Compact stats bar ── */
+  .stats-bar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .stat-pill {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 12px; font-size: 0.78em;
+    font-weight: 600; border: 1px solid transparent;
+  }
+  .stat-pill .sp-label { opacity: 0.75; font-weight: 500; }
+  .stat-pill.sp-pending { background: var(--st-pending-bg); color: var(--st-pending-fg); border-color: var(--border); }
+  .stat-pill.sp-running { background: var(--st-running-bg); color: var(--st-running-fg); }
+  .stat-pill.sp-success { background: var(--st-success-bg); color: var(--st-success-fg); }
+  .stat-pill.sp-failed  { background: var(--st-failed-bg);  color: var(--st-failed-fg); }
+  .stat-pill.sp-cost    { background: var(--bg); color: var(--accent); border-color: var(--border); }
 
   /* ── Submit form ── */
   .submit { display: flex; gap: 8px; margin-bottom: 22px; align-items: flex-start; }
@@ -258,9 +316,6 @@
   </div>
 </div>
 
-<!-- Workers -->
-<div class="workers" id="workers"></div>
-
 <!-- Submit -->
 <div class="submit">
   <textarea id="prompt" placeholder="Enter task prompt… (Ctrl+Enter to submit)" rows="1"></textarea>
@@ -268,6 +323,15 @@
     <button onclick="submitTask()">Submit</button>
     <span class="submit-hint">Ctrl+Enter</span>
   </div>
+</div>
+
+<!-- Worker Status Panel -->
+<div class="worker-panel">
+  <div class="worker-panel-header">
+    <span class="worker-panel-title">⚡ Worker Status</span>
+    <div class="stats-bar" id="stats-bar"></div>
+  </div>
+  <div class="worker-grid" id="worker-grid"></div>
 </div>
 
 <!-- Task table — newest first -->
@@ -357,11 +421,39 @@ function render(stats, tasks, workers) {
   document.getElementById('cs-count').textContent = billedTasks.length;
   document.getElementById('cs-max').textContent   = '$' + maxCost.toFixed(4);
 
-  // ── Workers ──
-  const wEl = document.getElementById('workers');
-  wEl.innerHTML = workers.map(w =>
-    `<div class="worker ${w.busy ? 'busy' : ''}">${esc(w.name)}${w.currentTask ? ': ' + esc(w.currentTask) : ''}</div>`
-  ).join('');
+  // ── Compact stats bar ──
+  const statsBar = document.getElementById('stats-bar');
+  const failedCount = (stats.byStatus?.failed ?? 0) + (stats.byStatus?.timeout ?? 0);
+  statsBar.innerHTML = [
+    `<div class="stat-pill sp-pending"><span class="sp-label">Pending</span> ${stats.queueSize ?? 0}</div>`,
+    `<div class="stat-pill sp-running"><span class="sp-label">Running</span> ${stats.activeWorkers ?? 0}</div>`,
+    `<div class="stat-pill sp-success"><span class="sp-label">Success</span> ${stats.byStatus?.success ?? 0}</div>`,
+    `<div class="stat-pill sp-failed"><span class="sp-label">Failed</span> ${failedCount}</div>`,
+    `<div class="stat-pill sp-cost"><span class="sp-label">Cost</span> $${(stats.totalCost ?? 0).toFixed(3)}</div>`,
+  ].join('');
+
+  // ── Worker Status Panel ──
+  const workerGrid = document.getElementById('worker-grid');
+  if (!workers || workers.length === 0) {
+    workerGrid.innerHTML = '<div class="worker-empty">No workers registered.</div>';
+  } else {
+    workerGrid.innerHTML = workers.map(w => {
+      const statusClass = w.busy ? 'busy' : 'idle';
+      const taskLine = w.currentTask
+        ? `<div class="worker-meta">Task&nbsp;<b>${esc(String(w.currentTask))}</b></div>`
+        : '';
+      const branchLine = w.branch
+        ? `<div class="worker-meta">Branch&nbsp;<b>${esc(w.branch)}</b></div>`
+        : '';
+      return `<div class="worker-card ${statusClass}">
+        <div class="worker-card-header">
+          <span class="worker-name">${esc(w.name)}</span>
+          <span class="worker-badge ${statusClass}">${w.busy ? 'BUSY' : 'IDLE'}</span>
+        </div>
+        ${taskLine}${branchLine}
+      </div>`;
+    }).join('');
+  }
 
   // ── Tasks — sorted newest first ──
   const sorted = [...tasks].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -529,8 +621,8 @@ function connectSSE() {
 }
 
 connectSSE();
-// Poll every 10 s as a safety net to catch any missed SSE events
-setInterval(refresh, 10000);
+// Poll every 5 s to keep worker status and task list fresh
+setInterval(refresh, 5000);
 refresh();
 </script>
 </body>
