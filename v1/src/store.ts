@@ -114,6 +114,61 @@ export class Store {
     runAll(tasks);
   }
 
+  /**
+   * Update only the specified fields of a task using a targeted SQL SET clause.
+   * More efficient than save() when only a few fields change.
+   * Returns the updated Task, or null if no task with that id exists.
+   */
+  update(id: string, fields: Partial<Task>): Task | null {
+    const fieldMap: Record<string, { col: string; serialize?: (v: unknown) => unknown }> = {
+      prompt:      { col: "prompt" },
+      status:      { col: "status" },
+      worktree:    { col: "worktree" },
+      output:      { col: "output" },
+      error:       { col: "error" },
+      events:      { col: "events",      serialize: (v) => JSON.stringify(v) },
+      createdAt:   { col: "created_at" },
+      startedAt:   { col: "started_at" },
+      completedAt: { col: "completed_at" },
+      timeout:     { col: "timeout" },
+      maxBudget:   { col: "max_budget" },
+      costUsd:     { col: "cost_usd" },
+      tokenInput:  { col: "token_input" },
+      tokenOutput: { col: "token_output" },
+      durationMs:  { col: "duration_ms" },
+      retryCount:  { col: "retry_count" },
+      maxRetries:  { col: "max_retries" },
+      priority:    { col: "priority" },
+      tags:        { col: "tags",        serialize: (v) => JSON.stringify(v) },
+    };
+
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+
+    for (const [key, mapping] of Object.entries(fieldMap)) {
+      if (key in fields) {
+        setClauses.push(`${mapping.col} = ?`);
+        const val = (fields as Record<string, unknown>)[key];
+        values.push(mapping.serialize ? mapping.serialize(val) : (val ?? null));
+      }
+    }
+
+    if (setClauses.length === 0) {
+      return this.get(id);
+    }
+
+    values.push(id);
+    const result = this.db
+      .prepare(`UPDATE tasks SET ${setClauses.join(", ")} WHERE id = ?`)
+      .run(...values);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.get(id);
+  }
+
   get(id: string): Task | null {
     const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as any;
     return row ? this.rowToTask(row) : null;
