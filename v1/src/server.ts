@@ -3,8 +3,11 @@ import { serve } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import path from "node:path";
+
+const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
 import type { Scheduler } from "./scheduler.js";
 import type { Store } from "./store.js";
@@ -17,6 +20,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_CLEANUP_MS = 5 * 60_000; // 5 minutes
+
+function isValidWebhookUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+  const host = parsed.hostname.toLowerCase();
+  // Block loopback, link-local, and RFC 1918 private ranges
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" || host === "[::1]" ||
+    host === "0.0.0.0" ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    return false;
+  }
+  return true;
+}
 
 export class WebServer {
   private app = new Hono();
@@ -42,15 +70,15 @@ export class WebServer {
     }
   }
 
-  private checkRateLimit(ip: string): { allowed: boolean; retryAfterSecs: number } {
+  private checkRateLimit(ip: string, cost = 1): { allowed: boolean; retryAfterSecs: number } {
     const now = Date.now();
     let entry = this.rateLimitStore.get(ip);
     if (!entry || entry.resetAt <= now) {
-      entry = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
+      entry = { count: cost, resetAt: now + RATE_LIMIT_WINDOW_MS };
       this.rateLimitStore.set(ip, entry);
       return { allowed: true, retryAfterSecs: 0 };
     }
-    entry.count += 1;
+    entry.count += cost;
     if (entry.count > RATE_LIMIT_MAX) {
       const retryAfterSecs = Math.ceil((entry.resetAt - now) / 1000);
       return { allowed: false, retryAfterSecs };
@@ -230,7 +258,7 @@ export class WebServer {
     });
 
     // API: task diff (git diff HEAD~1..HEAD in the task's worktree)
-    app.get("/api/tasks/:id/diff", (c) => {
+    app.get("/api/tasks/:id/diff", async (c) => {
       const task = this._scheduler.getTask(c.req.param("id"));
       if (!task) return c.json({ error: "not found" }, 404);
       if (!task.worktree) return c.json({ diff: null, message: "worktree not available" });
@@ -238,12 +266,18 @@ export class WebServer {
       const worker = this.pool.getWorker(task.worktree);
       if (!worker) return c.json({ diff: null, message: "worktree not available" });
 
+      // Guard: if the worker was reassigned to a different task, stale data
+      if (worker.busy && worker.currentTask !== task.id) {
+        return c.json({ diff: null, message: "worktree reassigned" });
+      }
+
       const worktreePath = worker.path;
 
       let commit: string;
       let diff: string;
       try {
-        commit = execSync("git log --oneline -1", { cwd: worktreePath }).toString().trim();
+        const { stdout } = await execFileAsync("git", ["log", "--oneline", "-1"], { cwd: worktreePath });
+        commit = stdout.trim();
       } catch {
         return c.json({ error: "no commits in worktree" }, 404);
       }
@@ -253,7 +287,8 @@ export class WebServer {
       }
 
       try {
-        diff = execSync("git diff HEAD~1..HEAD", { cwd: worktreePath }).toString();
+        const { stdout } = await execFileAsync("git", ["diff", "HEAD~1..HEAD"], { cwd: worktreePath });
+        diff = stdout;
       } catch {
         return c.json({ error: "no commits in worktree" }, 404);
       }
@@ -268,6 +303,16 @@ export class WebServer {
         body = await c.req.json();
       } catch {
         return c.json({ error: "bad json" }, 400);
+      }
+      // Rate limit: count each prompt in the batch against the limit
+      const batchSize = Array.isArray(body.prompts) ? body.prompts.length : 1;
+      const { allowed, retryAfterSecs } = this.checkRateLimit("direct", batchSize);
+      if (!allowed) {
+        return c.json(
+          { error: "Too Many Requests" },
+          429,
+          { "Retry-After": String(retryAfterSecs) },
+        );
       }
       if (!Array.isArray(body.prompts) || body.prompts.length === 0) {
         return c.json({ error: "prompts must be a non-empty array" }, 400);
@@ -302,10 +347,7 @@ export class WebServer {
 
     // API: submit task
     app.post("/api/tasks", async (c) => {
-      const ip =
-        c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
-        c.req.header("x-real-ip") ??
-        "unknown";
+      const ip = "direct"; // Don't trust proxy headers; use --trust-proxy if behind a reverse proxy
       const { allowed, retryAfterSecs } = this.checkRateLimit(ip);
       if (!allowed) {
         return c.json(
@@ -333,8 +375,10 @@ export class WebServer {
       if (body.priority !== undefined && !["urgent", "high", "normal", "low"].includes(body.priority as string)) {
         return c.json({ error: 'priority must be one of urgent, high, normal, low' }, 400);
       }
-      if (body.webhookUrl !== undefined && (typeof body.webhookUrl !== "string" || !body.webhookUrl.startsWith("http"))) {
-        return c.json({ error: "webhookUrl must be a URL starting with http" }, 400);
+      if (body.webhookUrl !== undefined) {
+        if (typeof body.webhookUrl !== "string" || !isValidWebhookUrl(body.webhookUrl)) {
+          return c.json({ error: "webhookUrl must be a valid http(s) URL pointing to a public host" }, 400);
+        }
       }
       if (body.tags !== undefined) {
         if (!Array.isArray(body.tags)) {
