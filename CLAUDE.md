@@ -29,7 +29,7 @@ node dist/index.js --repo /path/to/repo --workers 5 --port 8080
 ```
 
 ```bash
-# Run tests (66 tests across 5 suites)
+# Run tests (217 tests across 5 suites)
 cd v1 && node --import tsx --test src/__tests__/*.test.ts
 ```
 
@@ -40,6 +40,13 @@ cd v1 && node --import tsx --test src/__tests__/*.test.ts
 - Core files: server.ts, scheduler.ts, store.ts, agent-runner.ts, worktree-pool.ts, index.ts, types.ts, logger.ts
 - Keep changes minimal and focused — one concern per change
 - Always `git add -A && git commit` after successful changes
+
+### Commit & PR Discipline (CRITICAL)
+- **One logical change per commit** — never bundle unrelated fixes. If fixing 3 bugs, that's 3 commits.
+- **Commit immediately** — after each change passes `npx tsc` + tests, commit before starting the next change.
+- **Small PRs** — each PR addresses one concern (one bug fix, one feature, one refactor). Split large work into multiple PRs.
+- **No mega commits** — if a commit touches 5+ files for different reasons, it's too big. Stop and split.
+- **Test with the fix** — each commit includes its own test additions, not batched at the end.
 
 ## Agent Flywheel Strategy
 The cc-manager improves itself by running agents against its own codebase.
@@ -144,6 +151,12 @@ pending → running → success (branch merged to main)
 - **GitHub**: `agent-next/cc-manager` (private)
 - **Version**: v0.1.0
 
+## Security Notes
+- **No authentication**: cc-manager has no auth. It is a local dev tool — do NOT expose to the public internet.
+- **CORS is open**: `cors()` middleware allows all origins. If deploying behind a reverse proxy, restrict at the proxy level.
+- **Webhook SSRF**: Webhook URLs are validated to block private/loopback IPs, but DNS rebinding is not prevented. Only use trusted webhook endpoints.
+- **Rate limiting**: Uses a static key (`"direct"`) — does not trust `x-forwarded-for`. If behind a reverse proxy, add `--trust-proxy` support.
+
 ## Known Gotchas
 - `getDailyStats()` returns `{total, success, cost, successRate}` — do NOT use `count` (old field name, causes silent breakage in dashboard + scheduler)
 - Dashboard `esc()` must escape single quotes (`&#39;`) for onclick handlers
@@ -151,3 +164,4 @@ pending → running → success (branch merged to main)
 - `POST /api/tasks` accepts `agent` field: `"claude"` (CLI), `"claude-sdk"` (Agent SDK), `"codex"`, or any CLI command string
 - `"claude-sdk"` uses programmatic `query()` API with structured events, AbortController, precise cost tracking
 - `"claude"` uses `claude -p --dangerously-skip-permissions --output-format stream-json` CLI spawning
+- Task IDs are 16-char hex (v0.1.0+). Store uses INSERT OR IGNORE + UPDATE to prevent collision overwrites.

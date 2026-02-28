@@ -9,7 +9,10 @@ fi
 echo "pre-commit: type checking..."
 cd v1 && npx tsc --noEmit
 
+# Clear GIT_DIR/GIT_INDEX_FILE so tests that create temp git repos work correctly
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
+
 echo "pre-commit: running tests..."
-node --import tsx --test src/__tests__/*.test.ts
+node --import tsx --test --test-concurrency=1 src/__tests__/*.test.ts
 
 echo "pre-commit: all checks passed"
