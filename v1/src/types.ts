@@ -161,7 +161,7 @@ export interface FlywheelState {
 
 export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl" | "agent">>): Task {
   return {
-    id: opts?.id ?? crypto.randomUUID().slice(0, 8),
+    id: opts?.id ?? crypto.randomUUID().replace(/-/g, "").slice(0, 16),
     prompt,
     status: "pending",
     priority: opts?.priority ?? "normal",

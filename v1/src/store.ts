@@ -103,15 +103,9 @@ export class Store {
     `);
   }
 
-  save(task: Task): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO tasks
-      (id, prompt, status, worktree, output, error, events, created_at,
-       started_at, completed_at, timeout, max_budget, cost_usd,
-       token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary, agent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+  /** Serialize task fields to ordered SQL parameter array. */
+  private taskToParams(task: Task): unknown[] {
+    return [
       task.id, task.prompt, task.status, task.worktree ?? null,
       task.output, task.error, JSON.stringify(task.events),
       task.createdAt, task.startedAt ?? null, task.completedAt ?? null,
@@ -121,7 +115,31 @@ export class Store {
       JSON.stringify(task.tags ?? []),
       task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
       task.agent ?? "claude",
-    );
+    ];
+  }
+
+  save(task: Task): void {
+    // Try INSERT first; on conflict (existing id) fall through to UPDATE
+    const params = this.taskToParams(task);
+    const insertResult = this.db.prepare(`
+      INSERT OR IGNORE INTO tasks
+      (id, prompt, status, worktree, output, error, events, created_at,
+       started_at, completed_at, timeout, max_budget, cost_usd,
+       token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
+       depends_on, webhook_url, summary, agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(...params);
+    if (insertResult.changes === 0) {
+      // Row already exists — update it (params[0] is id, rest are fields; append id at end for WHERE)
+      this.db.prepare(`
+        UPDATE tasks SET
+          prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
+          started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
+          token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
+          priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+        WHERE id=?
+      `).run(...params.slice(1), task.id);
+    }
   }
 
   /**
@@ -130,27 +148,29 @@ export class Store {
    * near-simultaneously, because SQLite only flushes WAL once per transaction.
    */
   updateBatch(tasks: Task[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO tasks
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO tasks
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
        depends_on, webhook_url, summary, agent)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const updateStmt = this.db.prepare(`
+      UPDATE tasks SET
+        prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
+        started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
+        token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
+        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+      WHERE id=?
+    `);
     const runAll = this.db.transaction((batch: Task[]) => {
       for (const task of batch) {
-        stmt.run(
-          task.id, task.prompt, task.status, task.worktree ?? null,
-          task.output, task.error, JSON.stringify(task.events),
-          task.createdAt, task.startedAt ?? null, task.completedAt ?? null,
-          task.timeout, task.maxBudget, task.costUsd,
-          task.tokenInput, task.tokenOutput, task.durationMs, task.retryCount, task.maxRetries,
-          task.priority ?? "normal",
-          JSON.stringify(task.tags ?? []),
-          task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
-          task.agent ?? "claude",
-        );
+        const params = this.taskToParams(task);
+        const result = insertStmt.run(...params);
+        if (result.changes === 0) {
+          updateStmt.run(...params.slice(1), task.id);
+        }
       }
     });
     runAll(tasks);
@@ -166,27 +186,29 @@ export class Store {
    * Use instead of calling save() in a loop when inserting/replacing many tasks at once.
    */
   saveBatch(tasks: Task[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO tasks
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO tasks
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
        depends_on, webhook_url, summary, agent)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const updateStmt = this.db.prepare(`
+      UPDATE tasks SET
+        prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
+        started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
+        token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
+        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+      WHERE id=?
+    `);
     this.transaction(() => {
       for (const task of tasks) {
-        stmt.run(
-          task.id, task.prompt, task.status, task.worktree ?? null,
-          task.output, task.error, JSON.stringify(task.events),
-          task.createdAt, task.startedAt ?? null, task.completedAt ?? null,
-          task.timeout, task.maxBudget, task.costUsd,
-          task.tokenInput, task.tokenOutput, task.durationMs, task.retryCount, task.maxRetries,
-          task.priority ?? "normal",
-          JSON.stringify(task.tags ?? []),
-          task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
-          task.agent ?? "claude",
-        );
+        const params = this.taskToParams(task);
+        const result = insertStmt.run(...params);
+        if (result.changes === 0) {
+          updateStmt.run(...params.slice(1), task.id);
+        }
       }
     });
   }
@@ -343,6 +365,15 @@ export class Store {
     };
   }
 
+  private safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
+    if (!value) return fallback;
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
   private rowToTask(row: any): Task {
     return {
       id: row.id,
@@ -351,7 +382,7 @@ export class Store {
       worktree: row.worktree ?? undefined,
       output: row.output,
       error: row.error,
-      events: JSON.parse(row.events || "[]"),
+      events: this.safeJsonParse(row.events, []),
       createdAt: row.created_at,
       startedAt: row.started_at ?? undefined,
       completedAt: row.completed_at ?? undefined,
@@ -364,7 +395,7 @@ export class Store {
       retryCount: row.retry_count,
       maxRetries: row.max_retries ?? 2,
       priority: (row.priority ?? "normal") as import("./types.js").TaskPriority,
-      tags: JSON.parse(row.tags || "[]"),
+      tags: this.safeJsonParse(row.tags, []),
       dependsOn: row.depends_on ?? undefined,
       webhookUrl: row.webhook_url ?? undefined,
       summary: row.summary ?? undefined,
@@ -504,8 +535,8 @@ export class Store {
     return rows.map((r) => ({
       id: r.id as string,
       roundNumber: r.round_number as number,
-      taskIds: JSON.parse(r.task_ids || "[]") as string[],
-      analysis: JSON.parse(r.analysis || "{}") as Record<string, unknown>,
+      taskIds: this.safeJsonParse(r.task_ids, []) as string[],
+      analysis: this.safeJsonParse(r.analysis, {}) as Record<string, unknown>,
       createdAt: r.created_at as string,
     }));
   }
