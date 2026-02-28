@@ -307,17 +307,17 @@ export class WebServer {
       } catch {
         return c.json({ error: "bad json" }, 400);
       }
-      if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
-        return c.json({ error: "prompt must be a non-empty string" }, 400);
+      if (typeof body.prompt !== "string" || body.prompt.trim() === "" || body.prompt.length > 5000) {
+        return c.json({ error: "prompt is required and must be under 5000 chars" }, 400);
       }
-      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout <= 0 || body.timeout > 3600)) {
-        return c.json({ error: "timeout must be a positive number no greater than 3600" }, 400);
+      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout < 1 || body.timeout > 3600)) {
+        return c.json({ error: "timeout must be a number between 1 and 3600" }, 400);
       }
-      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget < 0)) {
-        return c.json({ error: "maxBudget must be a non-negative number" }, 400);
+      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget < 0 || body.maxBudget > 100)) {
+        return c.json({ error: "maxBudget must be a number between 0 and 100" }, 400);
       }
-      if (body.priority !== undefined && !["low", "normal", "high"].includes(body.priority as string)) {
-        return c.json({ error: 'priority must be "low", "normal", or "high"' }, 400);
+      if (body.priority !== undefined && !["urgent", "high", "normal", "low"].includes(body.priority as string)) {
+        return c.json({ error: 'priority must be one of urgent, high, normal, low' }, 400);
       }
       if (body.webhookUrl !== undefined && (typeof body.webhookUrl !== "string" || !body.webhookUrl.startsWith("http"))) {
         return c.json({ error: "webhookUrl must be a URL starting with http" }, 400);
@@ -341,7 +341,7 @@ export class WebServer {
       const task = this._scheduler.submit(body.prompt, {
         timeout: body.timeout as number | undefined,
         maxBudget: body.maxBudget as number | undefined,
-        priority: body.priority as "low" | "normal" | "high" | undefined,
+        priority: body.priority as "urgent" | "high" | "normal" | "low" | undefined,
         tags: body.tags as string[] | undefined,
         webhookUrl: body.webhookUrl as string | undefined,
       });
