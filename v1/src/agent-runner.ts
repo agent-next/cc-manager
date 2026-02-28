@@ -353,8 +353,9 @@ export class AgentRunner {
   /** Parse Claude event (shared by SDK and CLI paths) and update task metrics. */
   private handleClaudeEvent(msg: Record<string, unknown>, task: Task, startMs: number, onEvent?: EventCallback): void {
     const type = msg.type as string | undefined;
+    const isTerminal = task.status !== "running";
 
-    if (type === "assistant") {
+    if (type === "assistant" && !isTerminal) {
       const content = msg.message as { content?: Array<{ type: string; text?: string }> } | undefined;
       if (content?.content) {
         const text = content.content
@@ -368,6 +369,7 @@ export class AgentRunner {
     }
 
     if (type === "result") {
+      // Always capture metrics, even after timeout
       task.costUsd = (msg.total_cost_usd as number) ?? 0;
       const usage = msg.usage as { input_tokens?: number; output_tokens?: number } | undefined;
       task.tokenInput = usage?.input_tokens ?? 0;
@@ -377,15 +379,18 @@ export class AgentRunner {
       const entry = this._runningTasks.get(task.id);
       if (entry) entry.costUsd = task.costUsd;
 
-      const subtype = msg.subtype as string | undefined;
-      if (subtype === "success") {
-        task.status = "success";
-        task.output = (msg.result as string) ?? "";
-        task.summary = task.output.slice(-500);
-      } else {
-        task.status = "failed";
-        const errors = msg.errors as string[] | undefined;
-        task.error = errors?.length ? errors.join("; ") : (subtype ?? "unknown error");
+      // Only mutate status if still running — don't overwrite timeout/cancelled
+      if (!isTerminal) {
+        const subtype = msg.subtype as string | undefined;
+        if (subtype === "success") {
+          task.status = "success";
+          task.output = (msg.result as string) ?? "";
+          task.summary = task.output.slice(-500);
+        } else {
+          task.status = "failed";
+          const errors = msg.errors as string[] | undefined;
+          task.error = errors?.length ? errors.join("; ") : (subtype ?? "unknown error");
+        }
       }
     }
 
