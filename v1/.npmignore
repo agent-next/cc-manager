@@ -1,0 +1,6 @@
+src/
+__tests__/
+tsconfig.json
+.worktrees/
+*.db
+node_modules/
