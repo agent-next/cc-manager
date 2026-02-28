@@ -71,4 +71,53 @@ describe("Scheduler", () => {
     assert.strictEqual(stats.activeWorkers, 0);
     assert.strictEqual(stats.availableWorkers, 2);
   });
+
+  it("submit() adds task to queue and emits task_queued event", () => {
+    const events: Record<string, unknown>[] = [];
+    const s = new Scheduler(makePool(), makeRunner(), makeStore(), (ev) => events.push(ev));
+    const task = s.submit("queued task");
+    assert.strictEqual(s.getQueueDepth(), 1);
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].type, "task_queued");
+    assert.strictEqual(events[0].taskId, task.id);
+    assert.strictEqual(events[0].queueSize, 1);
+  });
+
+  it("cancel() removes a pending task from the queue", () => {
+    const s = new Scheduler(makePool(), makeRunner(), makeStore());
+    const task = s.submit("to be removed");
+    assert.strictEqual(s.getQueueDepth(), 1);
+    const result = s.cancel(task.id);
+    assert.strictEqual(result, true);
+    assert.strictEqual(s.getQueueDepth(), 0);
+    assert.strictEqual(s.getTask(task.id)?.status, "cancelled");
+  });
+
+  it("getStats() returns correct counts with multiple tasks and pool state", () => {
+    const s = new Scheduler(makePool(), makeRunner(), makeStore());
+    s.submit("x");
+    s.submit("y");
+    s.submit("z");
+    const stats = s.getStats();
+    assert.strictEqual(stats.total, 3);
+    assert.strictEqual(stats.queueSize, 3);
+    assert.strictEqual(stats.activeWorkers, 0);
+    assert.strictEqual(stats.availableWorkers, 2);
+    assert.strictEqual(stats.avgDurationMs, 0);
+    assert.strictEqual(stats.totalBudgetLimit, 0);
+  });
+
+  it("getQueuePosition() returns correct position for each task", () => {
+    const s = new Scheduler(makePool(), makeRunner(), makeStore());
+    const t1 = s.submit("first");
+    const t2 = s.submit("second");
+    assert.strictEqual(s.getQueuePosition(t1.id), 1);
+    assert.strictEqual(s.getQueuePosition(t2.id), 2);
+    assert.strictEqual(s.getQueuePosition("nonexistent"), -1);
+    s.cancel(t1.id);
+    // t1 is cancelled and removed from the queue
+    assert.strictEqual(s.getQueuePosition(t1.id), -1);
+    // t2 is now first in the queue
+    assert.strictEqual(s.getQueuePosition(t2.id), 1);
+  });
 });
