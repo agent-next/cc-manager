@@ -304,11 +304,11 @@ export class WebServer {
       if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
         return c.json({ error: "prompt must be a non-empty string" }, 400);
       }
-      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout <= 0)) {
-        return c.json({ error: "timeout must be a positive number" }, 400);
+      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout <= 0 || body.timeout > 3600)) {
+        return c.json({ error: "timeout must be a positive number no greater than 3600" }, 400);
       }
-      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget <= 0)) {
-        return c.json({ error: "maxBudget must be a positive number" }, 400);
+      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget < 0)) {
+        return c.json({ error: "maxBudget must be a non-negative number" }, 400);
       }
       if (body.priority !== undefined && !["low", "normal", "high"].includes(body.priority as string)) {
         return c.json({ error: 'priority must be "low", "normal", or "high"' }, 400);
