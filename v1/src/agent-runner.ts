@@ -56,11 +56,11 @@ export class AgentRunner {
 
 ## Instructions
 
-- **Scope**: Only modify the specific files mentioned in the prompt. Do not refactor, reformat, or touch unrelated code.
-- **TypeScript imports**: Always use \`.js\` extensions in TypeScript import paths (e.g. \`import { foo } from "./bar.js"\`).
-- **Before committing**: Run \`npx tsc\` to verify the project compiles without errors. Fix any type errors introduced by your changes before proceeding.
-- **When done**, stage and commit your changes:
-  \`git add -A && git commit -m "feat: <brief summary>"\``;
+- **Minimal changes**: Only modify what is necessary to complete the task. Do not refactor, reformat, or touch unrelated code.
+- **TypeScript imports**: Always use \`.js\` extensions in import paths (e.g. \`import { foo } from "./bar.js"\`).
+- **Type checking**: After making changes, run \`npx tsc\` to catch type errors.
+- **Fix before committing**: If \`npx tsc\` fails, fix all errors before proceeding to commit.
+- **Commit when done**: Stage and commit all changes with \`git add -A && git commit -m "feat: <brief summary>"\`.`;
 
     const abortController = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
