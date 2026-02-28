@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { WorktreePool } from "./worktree-pool.js";
 import { AgentRunner } from "./agent-runner.js";
 import { Store } from "./store.js";
@@ -43,6 +43,26 @@ process.on("unhandledRejection", (reason: unknown) => {
 });
 
 async function main() {
+  // Validate --repo: must exist and be a git repository
+  if (!existsSync(opts.repo) || !existsSync(`${opts.repo}/.git`)) {
+    console.error(`Error: ${opts.repo} is not a git repository`);
+    process.exit(1);
+  }
+
+  // Validate --workers: must be between 1 and 20
+  const workers = parseInt(opts.workers);
+  if (isNaN(workers) || workers < 1 || workers > 20) {
+    console.error(`Error: --workers must be between 1 and 20`);
+    process.exit(1);
+  }
+
+  // Validate --port: must be between 1024 and 65535
+  const port = parseInt(opts.port);
+  if (isNaN(port) || port < 1024 || port > 65535) {
+    console.error(`Error: --port must be between 1024 and 65535`);
+    process.exit(1);
+  }
+
   const pool = new WorktreePool(opts.repo, parseInt(opts.workers));
   await pool.init();
 
