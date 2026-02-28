@@ -26,32 +26,47 @@ A multi-agent orchestrator that runs multiple Claude Code agents in parallel usi
                                    └─────────────┘
 ```
 
-## How It Works
+## Features
 
-1. **Task submission** — clients POST a natural-language prompt to the API
-2. **Worker assignment** — the scheduler picks an idle worker and resets its worktree to `main`
-3. **Agent execution** — Claude Code runs inside the isolated worktree with `bypassPermissions`, up to 50 turns
-4. **Auto-commit** — each agent is instructed to `git add -A && git commit` before finishing
-5. **Auto-merge** — on success, the worker branch is merged back to `main`; on conflict, the merge is skipped
-6. **Persistence** — all task metadata (cost, tokens, duration, events) is saved to SQLite
+- **Parallel execution** — run up to N Claude Code agents simultaneously, each in an isolated git worktree
+- **REST API** — submit, list, cancel, and inspect tasks over HTTP
+- **Real-time streaming** — track task lifecycle events via Server-Sent Events (SSE)
+- **Auto-commit & merge** — agents commit their work and successful branches are merged back to `main` automatically
+- **SQLite persistence** — full task history with cost, token counts, duration, and event logs
+- **Web dashboard** — built-in browser UI at `http://localhost:8080`
+- **Per-task budgets** — configurable USD spend cap and timeout per task
+- **Conflict-safe** — merge conflicts are detected and skipped gracefully; the task is still marked successful
+
+## Prerequisites
+
+- **Node.js 20+**
+- **git**
+- **`ANTHROPIC_API_KEY`** environment variable set to a valid Anthropic API key
+
+## Installation
+
+```bash
+npm install -g cc-manager
+```
 
 ## Quick Start
 
 ```bash
-cd v1
-npm install
-npm run build
-node dist/index.js --repo /path/to/your/repo
+# 1. Set your API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 2. Start the server against your repo
+cc-manager --repo /path/to/your/repo
+
+# 3. Submit a task
+curl -X POST http://localhost:8080/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Add input validation to the login form"}'
 ```
 
-For development (no build step):
-```bash
-npm run dev -- --repo /path/to/your/repo
-```
+## Configuration
 
-Open the dashboard at **http://localhost:8080**
-
-## CLI Options
+All flags can be passed to the `cc-manager` CLI (or `node dist/index.js` when running from source):
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -65,7 +80,7 @@ Open the dashboard at **http://localhost:8080**
 
 **Example:**
 ```bash
-node dist/index.js \
+cc-manager \
   --repo ~/projects/my-app \
   --workers 5 \
   --port 3000 \
@@ -74,23 +89,17 @@ node dist/index.js \
   --model claude-opus-4-5
 ```
 
-## API Reference
+## API Overview
 
-### Stats
-
-```
-GET /api/stats
-```
-Returns queue depth, active worker count, and cost breakdown by task status.
-
-### Tasks
-
-```
-GET  /api/tasks          # List all tasks (recent first)
-GET  /api/tasks/:id      # Full task detail including event log
-POST /api/tasks          # Submit a new task
-DELETE /api/tasks/:id    # Cancel a pending task
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/stats` | Queue depth, active workers, and cost breakdown by status |
+| `GET` | `/api/tasks` | List all tasks, most recent first |
+| `GET` | `/api/tasks/:id` | Full task detail including event log |
+| `POST` | `/api/tasks` | Submit a new task with a natural-language prompt |
+| `DELETE` | `/api/tasks/:id` | Cancel a pending task |
+| `GET` | `/api/workers` | Worker pool status (name, path, branch, busy, currentTask) |
+| `GET` | `/api/events` | Server-Sent Events stream for real-time task lifecycle events |
 
 **POST /api/tasks** body:
 ```json
@@ -101,29 +110,7 @@ DELETE /api/tasks/:id    # Cancel a pending task
 }
 ```
 
-**Response:**
-```json
-{
-  "id": "a1b2c3d4",
-  "status": "pending",
-  "prompt": "...",
-  "createdAt": "2025-01-01T00:00:00.000Z"
-}
-```
-
-### Workers
-
-```
-GET /api/workers         # Worker pool status (name, path, branch, busy, currentTask)
-```
-
-### Real-time Events
-
-```
-GET /api/events          # Server-Sent Events stream
-```
-
-Emits JSON events as tasks move through their lifecycle:
+SSE events emitted on `GET /api/events`:
 
 | Event type | When |
 |------------|------|
@@ -131,14 +118,18 @@ Emits JSON events as tasks move through their lifecycle:
 | `task_started` | Worker assigned, agent running |
 | `task_final` | Task completed (success / failed / timeout) |
 
-**Example client:**
-```js
-const es = new EventSource('http://localhost:8080/api/events');
-es.onmessage = (e) => {
-  const event = JSON.parse(e.data);
-  console.log(event.type, event.taskId, event.status);
-};
-```
+## Dashboard
+
+Open **http://localhost:8080** in your browser after starting the server. The built-in web UI shows the live task queue, per-worker status, real-time event logs, and cost/token summaries — no extra setup required.
+
+## How It Works
+
+1. **Task submission** — clients POST a natural-language prompt to the API
+2. **Worker assignment** — the scheduler picks an idle worker and resets its worktree to `main`
+3. **Agent execution** — Claude Code runs inside the isolated worktree with `bypassPermissions`, up to 50 turns
+4. **Auto-commit** — each agent is instructed to `git add -A && git commit` before finishing
+5. **Auto-merge** — on success, the worker branch is merged back to `main`; on conflict, the merge is skipped
+6. **Persistence** — all task metadata (cost, tokens, duration, events) is saved to SQLite
 
 ## Project Structure
 
@@ -156,11 +147,8 @@ cc-manager/
 │   │   └── web/index.html     # Web dashboard
 │   ├── package.json
 │   └── tsconfig.json
-├── docs/
-│   └── AGENT-FLYWHEEL-DESIGN.md   # V2 vision: autonomous agent swarms
-├── tests/                     # Pytest + shell integration tests
-├── setup.sh                   # One-click environment bootstrap
-└── manager.py                 # Legacy Python prototype (V0)
+└── docs/
+    └── AGENT-FLYWHEEL-DESIGN.md   # V2 vision: autonomous agent swarms
 ```
 
 ## Tech Stack
@@ -194,3 +182,7 @@ On startup, CC-Manager creates `.worktrees/worker-{N}` directories — one per w
 4. On merge conflict, the merge is aborted and the task is still marked successful
 
 The `.worktrees/` directory and `.cc-manager.db` are gitignored.
+
+## License
+
+MIT
