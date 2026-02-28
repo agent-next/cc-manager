@@ -71,6 +71,17 @@ export class WebServer {
     // Enable CORS for all routes (allows external frontends and tools to access the API)
     app.use(cors());
 
+    // Global error handler: catches any unhandled error thrown by a route handler
+    app.onError((err, c) => {
+      log("error", "unhandled error", {
+        message: err.message,
+        stack: err.stack,
+        method: c.req.method,
+        path: c.req.path,
+      });
+      return c.json({ error: err.message, status: 500 }, 500);
+    });
+
     // Request logging middleware
     app.use(async (c, next) => {
       const start = Date.now();
