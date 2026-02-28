@@ -178,6 +178,31 @@ export class Scheduler {
     };
   }
 
+  getHistoricalInsights() {
+    const daily = this.store.getDailyStats();
+    const overall = this.store.stats();
+    const avgDurationMs = this.getAverageDuration();
+    const successCount = overall.byStatus["success"] ?? 0;
+    const failedCount = overall.byStatus["failed"] ?? 0;
+    const timeoutCount = overall.byStatus["timeout"] ?? 0;
+    const successRate = overall.total > 0 ? successCount / overall.total : 0;
+    return {
+      overall: {
+        total: overall.total,
+        successRate,
+        avgDurationMs,
+        totalCostUsd: overall.totalCost,
+        byStatus: overall.byStatus,
+      },
+      last7Days: daily,
+      analysis: {
+        failureRate: overall.total > 0 ? (failedCount + timeoutCount) / overall.total : 0,
+        avgCostPerTask: overall.total > 0 ? overall.totalCost / overall.total : 0,
+        peakDay: daily.length > 0 ? daily.reduce((a, b) => (a.count >= b.count ? a : b)).date : null,
+      },
+    };
+  }
+
   /**
    * Scan all active workers for tasks that have exceeded their timeout plus a
    * 30-second grace period.  Any stuck task is forcefully marked as "timeout",

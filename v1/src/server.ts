@@ -136,6 +136,11 @@ export class WebServer {
       return c.json(daily);
     });
 
+    // API: historical insights
+    app.get("/api/insights", (c) => {
+      return c.json(this._scheduler.getHistoricalInsights());
+    });
+
     // API: budget summary
     app.get("/api/budget", (c) => {
       const stats = this._scheduler.getStats();
