@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Scheduler } from "./scheduler.js";
@@ -164,6 +165,33 @@ export class WebServer {
       return c.text(task.output);
     });
 
+    // API: task diff (git diff HEAD~1..HEAD in the task's worktree)
+    app.get("/api/tasks/:id/diff", (c) => {
+      const task = this._scheduler.getTask(c.req.param("id"));
+      if (!task) return c.json({ error: "not found" }, 404);
+      if (!task.worktree) return c.json({ error: "no worktree assigned to this task" }, 404);
+
+      let commit: string;
+      let diff: string;
+      try {
+        commit = execSync("git log --oneline -1", { cwd: task.worktree }).toString().trim();
+      } catch {
+        return c.json({ error: "no commits in worktree" }, 404);
+      }
+
+      if (!commit) {
+        return c.json({ error: "no commits in worktree" }, 404);
+      }
+
+      try {
+        diff = execSync("git diff HEAD~1..HEAD", { cwd: task.worktree }).toString();
+      } catch {
+        return c.json({ error: "no commits in worktree" }, 404);
+      }
+
+      return c.json({ taskId: task.id, commit, diff });
+    });
+
     // API: batch submit tasks
     app.post("/api/tasks/batch", async (c) => {
       let body: { prompts?: unknown; timeout?: unknown; maxBudget?: unknown };
@@ -265,6 +293,21 @@ export class WebServer {
     app.delete("/api/tasks/:id", (c) => {
       const ok = this._scheduler.cancel(c.req.param("id"));
       return ok ? c.json({ ok: true }) : c.json({ error: "cannot cancel" }, 400);
+    });
+
+    // API: retry task (reset failed/timeout task back to pending and re-queue)
+    app.post("/api/tasks/:id/retry", (c) => {
+      const id = c.req.param("id");
+      const task = this._scheduler.getTask(id);
+      if (!task) return c.json({ error: "not found" }, 404);
+      const retried = this._scheduler.requeue(id);
+      if (!retried) {
+        return c.json(
+          { error: `task is not in a retryable state (current status: ${task.status})` },
+          400,
+        );
+      }
+      return c.json({ id: retried.id, status: retried.status, retryCount: retried.retryCount });
     });
 
     // API: workers
@@ -439,6 +482,20 @@ export class WebServer {
               },
             },
             exampleResponse: { id: "def456", status: "pending" },
+          },
+          {
+            method: "GET",
+            path: "/api/tasks/:id/diff",
+            description: "Return the git diff (HEAD~1..HEAD) from the worktree assigned to a task. Returns 404 if the task has no worktree or the worktree has fewer than two commits.",
+            exampleRequest: {
+              method: "GET",
+              url: "/api/tasks/abc123/diff",
+            },
+            exampleResponse: {
+              taskId: "abc123",
+              commit: "a1b2c3d Add input validation to signup form",
+              diff: "diff --git a/src/signup.ts b/src/signup.ts\n...",
+            },
           },
           {
             method: "POST",
