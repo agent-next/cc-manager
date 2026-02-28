@@ -295,10 +295,12 @@ export class AgentRunner {
       let stdout = "";
       let stderr = "";
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
       if (task.timeout > 0) {
         timer = setTimeout(() => {
           child.kill("SIGTERM");
+          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
           task.status = "timeout";
           task.error = `timeout: task exceeded ${task.timeout}s`;
         }, task.timeout * 1000);
@@ -324,6 +326,7 @@ export class AgentRunner {
 
       child.on("close", (code) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -346,6 +349,7 @@ export class AgentRunner {
 
       child.on("error", (err) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         reject(err);
       });
     });
@@ -432,10 +436,12 @@ export class AgentRunner {
       let stdout = "";
       let stderr = "";
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
       if (task.timeout > 0) {
         timer = setTimeout(() => {
           child.kill("SIGTERM");
+          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
           task.status = "timeout";
           task.error = `timeout: task exceeded ${task.timeout}s`;
         }, task.timeout * 1000);
@@ -461,6 +467,7 @@ export class AgentRunner {
 
       child.on("close", (code) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -483,6 +490,7 @@ export class AgentRunner {
 
       child.on("error", (err) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         reject(err);
       });
     });
@@ -550,10 +558,12 @@ export class AgentRunner {
       let stdout = "";
       let stderr = "";
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
       if (task.timeout > 0) {
         timer = setTimeout(() => {
           child.kill("SIGTERM");
+          killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
           task.status = "timeout";
           task.error = `timeout: task exceeded ${task.timeout}s`;
         }, task.timeout * 1000);
@@ -570,6 +580,7 @@ export class AgentRunner {
 
       child.on("close", (code) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         task.durationMs = Date.now() - startMs;
 
         if ((task.status as string) === "timeout") {
@@ -591,6 +602,7 @@ export class AgentRunner {
 
       child.on("error", (err) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         reject(err);
       });
     });

@@ -85,8 +85,9 @@ export class WorktreePool {
           try {
             await this.resetWorktree(w);
           } catch (err) {
-            log("error", "[pool] acquire: failed to reset worktree", { worker: w.name, err: String(err) });
-            throw new Error(`Failed to reset worktree '${w.name}' during acquire: ${String(err)}`);
+            log("error", "[pool] acquire: failed to reset worktree, skipping", { worker: w.name, err: String(err) });
+            w.busy = false;
+            continue;
           }
           return w;
         }
@@ -136,28 +137,21 @@ export class WorktreePool {
   }
 
   private async resetWorktree(w: WorkerInfo): Promise<void> {
-    try {
-      await this.gitIn(w.path, "checkout", w.branch);
-    } catch (err) {
-      log("error", "[pool] checkout failed", { worker: w.name, err: String(err) });
-    }
+    await this.gitIn(w.path, "checkout", w.branch);
 
-    // Try origin/main first (picks up upstream changes), fall back to local main
+    // Try origin/main first (picks up upstream changes), fall back to local main.
+    // Let failures throw — a dirty worktree must not be reused.
     try {
       await this.gitIn(w.path, "reset", "--hard", "origin/main");
     } catch {
-      try {
-        await this.gitIn(w.path, "reset", "--hard", "main");
-      } catch (err) {
-        log("error", "[pool] reset failed", { worker: w.name, err: String(err) });
-      }
+      await this.gitIn(w.path, "reset", "--hard", "main");
     }
 
     try {
       // Exclude node_modules from clean — we symlink it for build verification
       await this.gitIn(w.path, "clean", "-fdx", "-e", "node_modules", "-e", "v1/node_modules");
     } catch (err) {
-      log("error", "[pool] clean failed", { worker: w.name, err: String(err) });
+      log("warn", "[pool] clean failed (non-fatal)", { worker: w.name, err: String(err) });
     }
 
     // Ensure node_modules symlinks exist so agents can run npx tsc
