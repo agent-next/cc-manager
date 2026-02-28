@@ -67,6 +67,25 @@ export interface Config {
   systemPrompt: string;
 }
 
+export interface HistoricalInsights {
+  avgDuration: number;
+  successRate: number;
+  avgCost: number;
+  timeoutRate: number;
+}
+
+export interface PerformanceMetrics {
+  totalTasks: number;
+  successCount: number;
+  failedCount: number;
+  timeoutCount: number;
+  avgDurationMs: number;
+  avgCostUsd: number;
+  totalCostUsd: number;
+  p50DurationMs: number;
+  p90DurationMs: number;
+}
+
 export interface TaskCreateInput {
   prompt: string;
   timeout?: number;
