@@ -1,4 +1,5 @@
 import type { Task, TaskEvent } from "./types.js";
+import { log } from "./logger.js";
 
 type EventCallback = (event: Record<string, unknown>) => void;
 
@@ -19,6 +20,7 @@ export class AgentRunner {
     task.startedAt = new Date().toISOString();
     const startMs = Date.now();
 
+    log("info", "task start", { taskId: task.id, worker: task.worktree });
     onEvent?.({ type: "task_started", taskId: task.id, worker: task.worktree });
 
     const prompt = `${task.prompt}
@@ -146,6 +148,12 @@ export class AgentRunner {
     }
 
     task.completedAt = new Date().toISOString();
+    log("info", "task complete", {
+      taskId: task.id,
+      status: task.status,
+      costUsd: task.costUsd,
+      durationMs: task.durationMs,
+    });
     onEvent?.({ type: "task_completed", taskId: task.id, status: task.status });
     return task;
   }

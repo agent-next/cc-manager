@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { WorkerInfo } from "./types.js";
+import { log } from "./logger.js";
 
 const exec = promisify(execFile);
 
@@ -41,7 +42,7 @@ export class WorktreePool {
       this.workers.set(name, { name, path: workerPath, branch, busy: false });
     }
 
-    console.log(`[pool] ${this.workers.size} worktrees ready`);
+    log("info", "[pool] worktrees ready", { count: this.workers.size });
   }
 
   async acquire(): Promise<WorkerInfo | null> {
@@ -96,7 +97,7 @@ export class WorktreePool {
     try {
       await this.gitIn(w.path, "checkout", w.branch);
     } catch (err) {
-      console.error(`[pool][${w.name}] checkout failed:`, err);
+      log("error", "[pool] checkout failed", { worker: w.name, err: String(err) });
     }
 
     // Try origin/main first (picks up upstream changes), fall back to local main
@@ -106,14 +107,14 @@ export class WorktreePool {
       try {
         await this.gitIn(w.path, "reset", "--hard", "main");
       } catch (err) {
-        console.error(`[pool][${w.name}] reset failed:`, err);
+        log("error", "[pool] reset failed", { worker: w.name, err: String(err) });
       }
     }
 
     try {
       await this.gitIn(w.path, "clean", "-fdx");
     } catch (err) {
-      console.error(`[pool][${w.name}] clean failed:`, err);
+      log("error", "[pool] clean failed", { worker: w.name, err: String(err) });
     }
   }
 
@@ -122,7 +123,7 @@ export class WorktreePool {
     const { stdout: diff } = await this.git("log", `main..${w.branch}`, "--oneline");
     if (!diff.trim()) return { merged: true };
 
-    console.log(`[pool] merging ${w.branch} → main`);
+    log("info", "[pool] merging branch", { branch: w.branch, target: "main" });
 
     // Merge without checking out — stay on main
     try {
@@ -135,7 +136,7 @@ export class WorktreePool {
         conflictFiles = stdout.trim().split("\n").filter(Boolean);
       } catch {}
 
-      console.warn(`[pool] merge conflict on ${w.branch}, aborting`);
+      log("warn", "[pool] merge conflict, aborting", { branch: w.branch });
       await this.git("merge", "--abort").catch(() => {});
       return { merged: false, conflictFiles };
     }
