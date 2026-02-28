@@ -62,44 +62,52 @@ export class WorktreePool {
     }
   }
 
-  async release(name: string, merge: boolean): Promise<boolean> {
+  async release(name: string, merge: boolean): Promise<{ merged: boolean; conflictFiles?: string[] }> {
     await this.waitLock();
     this.lock = true;
     try {
       const w = this.workers.get(name);
-      if (!w) return false;
+      if (!w) return { merged: false };
 
-      let merged = true;
+      let result: { merged: boolean; conflictFiles?: string[] } = { merged: true };
       if (merge) {
-        merged = await this.mergeToMain(w);
+        result = await this.mergeToMain(w);
       }
 
       w.busy = false;
       w.currentTask = undefined;
-      return merged;
+      return result;
     } finally {
       this.lock = false;
     }
   }
 
-  private async mergeToMain(w: WorkerInfo): Promise<boolean> {
+  private async mergeToMain(w: WorkerInfo): Promise<{ merged: boolean; conflictFiles?: string[] }> {
     // Check if branch has new commits vs main
     const { stdout: diff } = await this.git("log", `main..${w.branch}`, "--oneline");
-    if (!diff.trim()) return true;
+    if (!diff.trim()) return { merged: true };
 
     console.log(`[pool] merging ${w.branch} → main`);
 
     // Merge without checking out — stay on main
-    const r = await this.git("merge", w.branch, "--no-edit").catch(() => null);
-    if (!r) {
+    try {
+      await this.git("merge", w.branch, "--no-edit");
+    } catch {
+      // Collect conflicting file names before aborting
+      let conflictFiles: string[] = [];
+      try {
+        const { stdout } = await this.git("diff", "--name-only", "--diff-filter=U");
+        conflictFiles = stdout.trim().split("\n").filter(Boolean);
+      } catch {}
+
       console.warn(`[pool] merge conflict on ${w.branch}, aborting`);
       await this.git("merge", "--abort").catch(() => {});
-      return false;
+      return { merged: false, conflictFiles };
     }
 
     // Reset worktree to latest main
     await this.gitIn(w.path, "reset", "--hard", "main").catch(() => {});
-    return true;
+    return { merged: true };
   }
 
   get available(): number {
