@@ -64,13 +64,25 @@ export class Scheduler {
     return true;
   }
 
+  getAverageDuration(): number {
+    const completed = [...this.tasks.values()].filter((t) => t.durationMs > 0);
+    if (completed.length === 0) return 0;
+    const total = completed.reduce((sum, t) => sum + t.durationMs, 0);
+    return total / completed.length;
+  }
+
   getStats() {
     const dbStats = this.store.stats();
+    const avgDurationMs = this.getAverageDuration();
+    const queueSize = this.queue.length;
+    const activeWorkers = this.activeWorkers.size;
     return {
       ...dbStats,
-      queueSize: this.queue.length,
-      activeWorkers: this.activeWorkers.size,
+      queueSize,
+      activeWorkers,
       availableWorkers: this.pool.available,
+      avgDurationMs,
+      estimatedWaitMs: (avgDurationMs * queueSize) / Math.max(activeWorkers, 1),
     };
   }
 
