@@ -4,16 +4,16 @@
 Multi-agent orchestrator that runs parallel Claude Code agents in git worktrees. Tasks submitted via REST API, monitored via SSE, agents auto-commit and merge to main.
 
 ## Architecture
-- **v1/src/index.ts** — CLI entry point (Commander.js)
-- **v1/src/server.ts** — Hono REST API + SSE
-- **v1/src/scheduler.ts** — Task queue, priority dispatch, retry logic, stale worker recovery
-- **v1/src/agent-runner.ts** — Multi-agent CLI spawning (Claude, Codex, generic), cost tracking, code review
+- **src/index.ts** — CLI entry point (Commander.js)
+- **src/server.ts** — Hono REST API + SSE
+- **src/scheduler.ts** — Task queue, priority dispatch, retry logic, stale worker recovery
+- **src/agent-runner.ts** — Multi-agent CLI spawning (Claude, Codex, generic), cost tracking, code review
   - Hybrid architecture: Claude Agent SDK (`claude-sdk`) for programmatic control + CLI spawning for all agents
-- **v1/src/worktree-pool.ts** — Git worktree lifecycle, parallel init, merge
-- **v1/src/store.ts** — SQLite persistence (better-sqlite3, WAL mode)
-- **v1/src/types.ts** — Shared TypeScript types
-- **v1/src/logger.ts** — Structured JSON logger
-- **v1/src/web/index.html** — Dashboard (vanilla HTML/JS, dark theme)
+- **src/worktree-pool.ts** — Git worktree lifecycle, parallel init, merge
+- **src/store.ts** — SQLite persistence (better-sqlite3, WAL mode)
+- **src/types.ts** — Shared TypeScript types
+- **src/logger.ts** — Structured JSON logger
+- **src/web/index.html** — Dashboard (vanilla HTML/JS, dark theme)
 
 ## Tech Stack
 - TypeScript 5 / Node.js ESM
@@ -24,13 +24,13 @@ Multi-agent orchestrator that runs parallel Claude Code agents in git worktrees.
 
 ## Build, Test & Run
 ```bash
-cd v1 && npx tsc && cp src/web/index.html dist/web/index.html
+npx tsc && cp src/web/index.html dist/web/index.html
 node dist/index.js --repo /path/to/repo --workers 5 --port 8080
 ```
 
 ```bash
 # Run tests (217 tests across 5 suites)
-cd v1 && node --import tsx --test src/__tests__/*.test.ts
+node --import tsx --test src/__tests__/*.test.ts
 ```
 
 ## Development Rules
@@ -134,11 +134,11 @@ pending → running → success (branch merged to main)
 - **Technical debt** — Are we creating debt or paying it down?
 
 ## Test Files
-- `v1/src/__tests__/store.test.ts` — Store CRUD, search, cleanup, errors (BDD-style)
-- `v1/src/__tests__/worktree-pool.test.ts` — WorktreePool lifecycle
-- `v1/src/__tests__/scheduler.test.ts` — Submit, cancel, stats, queue position
-- `v1/src/__tests__/agent-runner.test.ts` — Cost estimation, code review, system prompt, CLI dispatch
-- `v1/src/__tests__/server.test.ts` — API input validation (prompt, timeout, priority, tags, webhookUrl)
+- `src/__tests__/store.test.ts` — Store CRUD, search, cleanup, errors (BDD-style)
+- `src/__tests__/worktree-pool.test.ts` — WorktreePool lifecycle
+- `src/__tests__/scheduler.test.ts` — Submit, cancel, stats, queue position
+- `src/__tests__/agent-runner.test.ts` — Cost estimation, code review, system prompt, CLI dispatch
+- `src/__tests__/server.test.ts` — API input validation (prompt, timeout, priority, tags, webhookUrl)
 
 ## Repository
 - **GitHub**: `agent-next/cc-manager` (private)

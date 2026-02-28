@@ -96,7 +96,7 @@ curl http://localhost:8080/api/tasks/<task-id>/diff
 
 ```bash
 git clone https://github.com/agent-next/cc-manager.git
-cd cc-manager/v1
+cd cc-manager
 npm install
 npm run build
 node dist/index.js --repo /path/to/your/repo

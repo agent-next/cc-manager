@@ -57,14 +57,13 @@ sudo systemctl status cc-manager
 ## Upgrade Procedure
 
 1. Pull latest code.
-2. Install dependencies in `v1/`.
+2. Install dependencies.
 3. Build TypeScript output.
 4. Restart service.
 5. Run health and smoke checks.
 
 ```bash
 git pull
-cd v1
 npm ci
 npm run build
 sudo systemctl restart cc-manager

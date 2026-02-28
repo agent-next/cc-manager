@@ -11,10 +11,7 @@ Thank you for your interest in contributing! This document covers everything you
 git clone https://github.com/agent-next/cc-manager.git
 cd cc-manager
 
-# 2. Move into the main application directory
-cd v1
-
-# 3. Install dependencies (also sets up pre-commit hooks)
+# 2. Install dependencies (also sets up pre-commit hooks)
 npm install
 
 # 4. Start the development server
@@ -27,39 +24,13 @@ npm run dev
 
 ## Project Structure
 
-```
-cc-manager/
-├── v1/                        # Main TypeScript/Node.js application
-│   ├── src/
-│   │   ├── index.ts           # CLI entry point — parses options and wires up core components
-│   │   ├── scheduler.ts       # Task queue and worker orchestration (FIFO, priority levels)
-│   │   ├── agent-runner.ts    # Multi-agent spawning (SDK + CLI), cost tracking, code review
-│   │   ├── worktree-pool.ts   # Git worktree lifecycle — creates, resets, and merges worktrees
-│   │   ├── server.ts          # Hono REST API + Server-Sent Events endpoint
-│   │   ├── store.ts           # SQLite persistence via better-sqlite3 (WAL mode)
-│   │   ├── types.ts           # Shared TypeScript interfaces (Task, Worker, Stats, Config)
-│   │   ├── logger.ts          # Lightweight logging utility
-│   │   └── web/
-│   │       └── index.html     # Web dashboard — real-time task monitoring UI (no frameworks)
-│   ├── tsconfig.json          # TypeScript compiler configuration
-│   └── package.json           # Dependencies and npm scripts
-├── .githooks/                 # Git hooks (pre-commit: tsc + tests)
-├── .github/workflows/         # CI/CD (GitHub Actions)
-├── docs/                      # Design documents, API reference, planning notes
-├── README.md                  # Quick-start guide and API reference
-├── CLAUDE.md                  # Development rules injected into agent system prompts
-├── CHANGELOG.md               # Release notes
-└── CONTRIBUTING.md            # This file
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module dependency graph.
 
 ---
 
 ## Running Tests
 
 ```bash
-# From the v1/ directory
-cd v1
-
 # Run all tests (71 BDD-style tests across 5 suites)
 npm test
 
@@ -99,7 +70,7 @@ Pre-commit hooks run both `tsc` and `npm test` automatically. All type errors an
 
 ## Code Style
 
-- **Language:** All application code is written in **TypeScript**. Do not add plain `.js` source files under `v1/src/`.
+- **Language:** All application code is written in **TypeScript**. Do not add plain `.js` source files under `src/`.
 - **Imports:** Always use `.js` extensions in import paths, even when importing `.ts` files:
   ```ts
   // correct

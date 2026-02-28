@@ -144,11 +144,11 @@ export const defaultAutoFlywheelConfig: AutoFlywheelConfig = {
   minSuccessRate: 0.8,
   cooldownMinutes: 30,
   targetFiles: [
-    "v1/src/types.ts",
-    "v1/src/queue.ts",
-    "v1/src/server.ts",
-    "v1/src/worker.ts",
-    "v1/src/routes.ts",
+    "src/types.ts",
+    "src/store.ts",
+    "src/server.ts",
+    "src/scheduler.ts",
+    "src/agent-runner.ts",
   ],
 };
 

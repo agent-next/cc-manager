@@ -22,11 +22,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/web && cp src/web/index.html dist/web/index.html",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test src/__tests__/*.test.ts",
-    "prepare": "cd .. && git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.62",
