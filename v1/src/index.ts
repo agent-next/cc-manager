@@ -28,13 +28,18 @@ if (opts.systemPromptFile) {
   systemPrompt = readFileSync(opts.systemPromptFile, "utf8");
 }
 
-async function main() {
-  console.log("CC-Manager V1 starting...");
-  console.log(`  repo:    ${opts.repo}`);
-  console.log(`  workers: ${opts.workers}`);
-  console.log(`  port:    ${opts.port}`);
-  console.log(`  model:   ${opts.model}`);
+// Global error handlers for graceful exit
+process.on("uncaughtException", (err: Error) => {
+  console.error("Uncaught exception:", err);
+  process.exit(1);
+});
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});
+
+async function main() {
   const pool = new WorktreePool(opts.repo, parseInt(opts.workers));
   await pool.init();
 
@@ -51,12 +56,29 @@ async function main() {
 
   const totalBudget = parseFloat(opts.totalBudget);
   if (totalBudget > 0) {
-    console.log(`  total-budget: $${totalBudget}`);
     scheduler.setTotalBudgetLimit(totalBudget);
   }
 
   scheduler.start();
   server.start();
+
+  // Print formatted startup banner
+  const col = 16;
+  const url = `http://localhost:${opts.port}`;
+  console.log("");
+  console.log("  CC-Manager V1  •  Ready");
+  console.log("  " + "─".repeat(44));
+  console.log(`  ${"Server URL".padEnd(col)}${url}`);
+  console.log(`  ${"Repo".padEnd(col)}${opts.repo}`);
+  console.log(`  ${"Workers".padEnd(col)}${opts.workers}`);
+  console.log(`  ${"Model".padEnd(col)}${opts.model}`);
+  console.log(`  ${"Timeout".padEnd(col)}${opts.timeout}s`);
+  console.log(`  ${"Budget".padEnd(col)}$${opts.budget} per task`);
+  if (totalBudget > 0) {
+    console.log(`  ${"Total Budget".padEnd(col)}$${totalBudget}`);
+  }
+  console.log("  " + "─".repeat(44));
+  console.log("");
 
   const shutdown = async () => {
     console.log("\nShutting down...");
