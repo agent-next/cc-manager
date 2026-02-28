@@ -48,6 +48,7 @@ A multi-agent orchestrator that runs parallel coding agents in git worktrees. Su
 ## Prerequisites
 
 - **Node.js 20+**
+- A JavaScript package manager (**npm**, **pnpm**, or **yarn**)
 - **git**
 - At least one agent CLI installed:
   - **Claude Code** (`claude` CLI) — set `ANTHROPIC_API_KEY`
@@ -57,13 +58,30 @@ A multi-agent orchestrator that runs parallel coding agents in git worktrees. Su
 ## Installation
 
 ```bash
+# npm
 npm install -g cc-manager
+
+# pnpm
+pnpm add -g cc-manager
+
+# yarn
+yarn global add cc-manager
 ```
 
-Or run from source:
+Or run from source (no global install):
 
 ```bash
-cd v1 && npm install && npx tsc
+cd v1
+
+# npm
+npm install && npm run build
+
+# pnpm
+pnpm install && pnpm build
+
+# yarn
+yarn install && yarn build
+
 node dist/index.js --repo /path/to/repo
 ```
 
