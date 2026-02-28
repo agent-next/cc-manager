@@ -8,6 +8,7 @@ Multi-agent orchestrator that runs parallel Claude Code agents in git worktrees.
 - **v1/src/server.ts** — Hono REST API + SSE
 - **v1/src/scheduler.ts** — Task queue, priority dispatch, retry logic, stale worker recovery
 - **v1/src/agent-runner.ts** — Multi-agent CLI spawning (Claude, Codex, generic), cost tracking, code review
+  - Hybrid architecture: Claude Agent SDK (`claude-sdk`) for programmatic control + CLI spawning for all agents
 - **v1/src/worktree-pool.ts** — Git worktree lifecycle, parallel init, merge
 - **v1/src/store.ts** — SQLite persistence (better-sqlite3, WAL mode)
 - **v1/src/types.ts** — Shared TypeScript types
@@ -147,4 +148,6 @@ pending → running → success (branch merged to main)
 - `getDailyStats()` returns `{total, success, cost, successRate}` — do NOT use `count` (old field name, causes silent breakage in dashboard + scheduler)
 - Dashboard `esc()` must escape single quotes (`&#39;`) for onclick handlers
 - Claude CLI spawning: must clear `CLAUDECODE` and `CLAUDE_CODE_*` env vars to prevent nesting
-- `POST /api/tasks` accepts `agent` field: `"claude"`, `"codex"`, or any CLI command string
+- `POST /api/tasks` accepts `agent` field: `"claude"` (CLI), `"claude-sdk"` (Agent SDK), `"codex"`, or any CLI command string
+- `"claude-sdk"` uses programmatic `query()` API with structured events, AbortController, precise cost tracking
+- `"claude"` uses `claude -p --dangerously-skip-permissions --output-format stream-json` CLI spawning

@@ -1,7 +1,5 @@
 node_modules/
 dist/
-__pycache__/
-*.pyc
 .worktrees/
 .cc-manager.db
 .cc-manager.db-wal

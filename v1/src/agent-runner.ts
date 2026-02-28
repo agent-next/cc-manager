@@ -1,15 +1,22 @@
 import type { Task, TaskEvent } from "./types.js";
 import { log } from "./logger.js";
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { exec as execCb } from "node:child_process";
+import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 
+const execAsync = promisify(execCb);
+
 type EventCallback = (event: Record<string, unknown>) => void;
+
+const MAX_EVENTS = 200;
 
 interface RunningTaskEntry {
   id: string;
   startMs: number;
   costUsd: number;
   process?: ChildProcess;
+  abortController?: AbortController;
 }
 
 export interface RunningTaskInfo {
@@ -72,6 +79,16 @@ export class AgentRunner {
     }));
   }
 
+  /** Returns a clean copy of process.env without Claude Code nesting detection vars. */
+  private cleanEnv(): Record<string, string | undefined> {
+    const env: Record<string, string | undefined> = { ...process.env };
+    delete env.CLAUDECODE;
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("CLAUDE_CODE_")) delete env[key];
+    }
+    return env;
+  }
+
   buildSystemPrompt(task: Task, cwd: string = process.cwd()): string {
     const parts: string[] = [];
 
@@ -125,7 +142,9 @@ export class AgentRunner {
     onEvent?.({ type: "task_started", taskId: task.id, worker: task.worktree, agent });
 
     try {
-      if (agent === "claude") {
+      if (agent === "claude-sdk") {
+        await this.runClaudeSDK(task, cwd, startMs, onEvent);
+      } else if (agent === "claude") {
         await this.runClaude(task, cwd, startMs, onEvent);
       } else if (agent === "codex") {
         await this.runCodex(task, cwd, startMs, onEvent);
@@ -150,25 +169,29 @@ export class AgentRunner {
 
     // Capture git diff for any commits made by the agent
     try {
-      const diff = execSync("git diff HEAD~1..HEAD", { cwd, encoding: "utf8" });
+      const { stdout: diff } = await execAsync("git diff HEAD~1..HEAD", { cwd, encoding: "utf8" });
       if (diff.trim()) {
         const diffEvt: TaskEvent = {
           type: "git_diff",
           timestamp: new Date().toISOString(),
           data: { diff },
         };
-        task.events.push(diffEvt);
+        this.pushEvent(task, diffEvt);
         onEvent?.({ type: "task_event", taskId: task.id, event: diffEvt });
       }
     } catch {
       // No commits or git unavailable
     }
 
-    // Post-execution build verification
-    const buildResult = this.verifyBuild(cwd);
-    if (!buildResult.ok) {
-      task.output = "[TSC_FAILED] " + (task.output ?? "");
-      task.error = buildResult.errors;
+    // Post-execution build verification — tsc failure blocks merge
+    if ((task.status as string) === "success") {
+      const buildResult = await this.verifyBuild(cwd);
+      if (!buildResult.ok) {
+        task.status = "failed";
+        task.output = "[TSC_FAILED] " + (task.output ?? "");
+        task.error = buildResult.errors;
+        log("warn", "build verification failed", { taskId: task.id, errors: buildResult.errors });
+      }
     }
 
     task.completedAt = new Date().toISOString();
@@ -181,6 +204,65 @@ export class AgentRunner {
     });
     onEvent?.({ type: "task_completed", taskId: task.id, status: task.status });
     return task;
+  }
+
+  /** Run task using Claude Agent SDK (programmatic control with structured events). */
+  private async runClaudeSDK(task: Task, cwd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
+    let query: typeof import("@anthropic-ai/claude-agent-sdk")["query"];
+    try {
+      ({ query } = await import("@anthropic-ai/claude-agent-sdk"));
+    } catch {
+      throw new Error("claude-sdk agent requires @anthropic-ai/claude-agent-sdk. Install: npm install @anthropic-ai/claude-agent-sdk");
+    }
+
+    const sysPrompt = this.buildSystemPrompt(task, cwd);
+    const fullPrompt = this.buildTaskPrompt(task);
+    const env = this.cleanEnv();
+
+    const ac = new AbortController();
+    const entry = this._runningTasks.get(task.id);
+    if (entry) entry.abortController = ac;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (task.timeout > 0) {
+      timer = setTimeout(() => {
+        ac.abort();
+        task.status = "timeout";
+        task.error = `timeout: task exceeded ${task.timeout}s`;
+      }, task.timeout * 1000);
+    }
+
+    try {
+      const conversation = query({
+        prompt: fullPrompt,
+        options: {
+          cwd,
+          env,
+          model: this.model,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          maxTurns: 50,
+          maxBudgetUsd: task.maxBudget > 0 ? task.maxBudget : undefined,
+          systemPrompt: sysPrompt ? { type: "preset", preset: "claude_code", append: sysPrompt } : undefined,
+          abortController: ac,
+          persistSession: false,
+        },
+      });
+
+      for await (const msg of conversation) {
+        // Reuse the shared Claude event handler — SDK messages match the CLI stream-json format
+        this.handleClaudeEvent(msg as Record<string, unknown>, task, startMs, onEvent);
+      }
+
+      // Stream ended without a result message — not a success
+      if (task.status === "running") {
+        task.status = "failed";
+        task.error = "SDK stream ended without result message";
+        task.durationMs = Date.now() - startMs;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /** Run task using Claude CLI (non-interactive mode with stream-json output). */
@@ -203,12 +285,7 @@ export class AgentRunner {
       }
       args.push(fullPrompt);
 
-      // Clear nesting detection env vars
-      const env = { ...process.env };
-      delete env.CLAUDECODE;
-      for (const key of Object.keys(env)) {
-        if (key.startsWith("CLAUDE_CODE_")) delete env[key];
-      }
+      const env = this.cleanEnv();
 
       const child = spawn("claude", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
       const entry = this._runningTasks.get(task.id);
@@ -230,7 +307,6 @@ export class AgentRunner {
         const text = chunk.toString();
         stdout += text;
 
-        // Parse JSONL lines from Claude CLI stream-json output
         for (const line of text.split("\n").filter(Boolean)) {
           try {
             const msg = JSON.parse(line);
@@ -256,7 +332,6 @@ export class AgentRunner {
 
         if (code === 0 && task.status === "running") {
           task.status = "success";
-          // Extract final output from accumulated JSONL
           if (!task.output) {
             task.output = this.extractClaudeOutput(stdout);
           }
@@ -275,7 +350,7 @@ export class AgentRunner {
     });
   }
 
-  /** Parse Claude CLI stream-json event and update task metrics. */
+  /** Parse Claude event (shared by SDK and CLI paths) and update task metrics. */
   private handleClaudeEvent(msg: Record<string, unknown>, task: Task, startMs: number, onEvent?: EventCallback): void {
     const type = msg.type as string | undefined;
 
@@ -297,7 +372,7 @@ export class AgentRunner {
       const usage = msg.usage as { input_tokens?: number; output_tokens?: number } | undefined;
       task.tokenInput = usage?.input_tokens ?? 0;
       task.tokenOutput = usage?.output_tokens ?? 0;
-      task.durationMs = Date.now() - startMs;
+      task.durationMs = (msg.duration_ms as number) ?? (Date.now() - startMs);
 
       const entry = this._runningTasks.get(task.id);
       if (entry) entry.costUsd = task.costUsd;
@@ -309,13 +384,13 @@ export class AgentRunner {
         task.summary = task.output.slice(-500);
       } else {
         task.status = "failed";
-        task.error = subtype ?? "unknown error";
+        const errors = msg.errors as string[] | undefined;
+        task.error = errors?.length ? errors.join("; ") : (subtype ?? "unknown error");
       }
     }
 
-    const evt: TaskEvent = { type: type ?? "unknown", timestamp: new Date().toISOString() };
-    task.events.push(evt);
-    onEvent?.({ type: "task_event", taskId: task.id, event: evt });
+    this.pushEvent(task, { type: type ?? "unknown", timestamp: new Date().toISOString() });
+    onEvent?.({ type: "task_event", taskId: task.id, event: { type: type ?? "unknown" } });
   }
 
   /** Extract text output from Claude CLI raw JSONL stdout. */
@@ -433,7 +508,7 @@ export class AgentRunner {
       }
     }
 
-    task.events.push({ type: type ?? "unknown", timestamp: new Date().toISOString() });
+    this.pushEvent(task, { type: type ?? "unknown", timestamp: new Date().toISOString() });
     onEvent?.({ type: "task_event", taskId: task.id, event: { type: type ?? "unknown" } });
   }
 
@@ -530,9 +605,10 @@ export class AgentRunner {
 - **Commit when done**: Stage and commit all changes with \`git add -A && git commit -m "feat: <brief summary>"\`.`;
   }
 
-  private verifyBuild(cwd: string): { ok: boolean; errors: string } {
+  /** Async build verification — does not block the event loop. */
+  private async verifyBuild(cwd: string): Promise<{ ok: boolean; errors: string }> {
     try {
-      execSync("npx tsc --noEmit", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      await execAsync("npx tsc --noEmit", { cwd, encoding: "utf8" });
       return { ok: true, errors: "" };
     } catch (err: unknown) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
@@ -541,11 +617,24 @@ export class AgentRunner {
     }
   }
 
-  /** Kill a running task's process. */
+  /** Push event to task, capping at MAX_EVENTS to prevent unbounded growth. */
+  private pushEvent(task: Task, evt: TaskEvent): void {
+    if (task.events.length >= MAX_EVENTS) {
+      task.events.shift();
+    }
+    task.events.push(evt);
+  }
+
+  /** Kill a running task's process or abort SDK query. */
   abort(taskId: string): boolean {
     const entry = this._runningTasks.get(taskId);
-    if (entry?.process) {
+    if (!entry) return false;
+    if (entry.process) {
       entry.process.kill("SIGTERM");
+      return true;
+    }
+    if (entry.abortController) {
+      entry.abortController.abort();
       return true;
     }
     return false;
