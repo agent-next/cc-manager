@@ -149,7 +149,7 @@ export class WorktreePool {
 
     try {
       // Exclude node_modules from clean — we symlink it for build verification
-      await this.gitIn(w.path, "clean", "-fdx", "-e", "node_modules", "-e", "v1/node_modules");
+      await this.gitIn(w.path, "clean", "-fdx", "-e", "node_modules");
     } catch (err) {
       log("warn", "[pool] clean failed (non-fatal)", { worker: w.name, err: String(err) });
     }

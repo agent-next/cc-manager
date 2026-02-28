@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "cc-manager-v1",
+      "name": "cc-manager",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["v1/dist/index.js", "--repo", ".", "--workers", "5", "--port", "8080"],
+      "runtimeArgs": ["dist/index.js", "--repo", ".", "--workers", "5", "--port", "8080"],
       "port": 8080
     }
   ]
