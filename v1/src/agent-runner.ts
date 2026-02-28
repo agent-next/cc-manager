@@ -23,8 +23,15 @@ export class AgentRunner {
 
     const prompt = `${task.prompt}
 
-When done, stage and commit your changes:
-  git add -A && git commit -m "feat: <brief summary>"`;
+---
+
+## Instructions
+
+- **Scope**: Only modify the specific files mentioned in the prompt. Do not refactor, reformat, or touch unrelated code.
+- **TypeScript imports**: Always use \`.js\` extensions in TypeScript import paths (e.g. \`import { foo } from "./bar.js"\`).
+- **Before committing**: Run \`npx tsc\` to verify the project compiles without errors. Fix any type errors introduced by your changes before proceeding.
+- **When done**, stage and commit your changes:
+  \`git add -A && git commit -m "feat: <brief summary>"\``;
 
     const abortController = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
