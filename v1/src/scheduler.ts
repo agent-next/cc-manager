@@ -36,7 +36,7 @@ export class Scheduler {
     console.log("[scheduler] stopped");
   }
 
-  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number }): Task {
+  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority }): Task {
     const task = createTask(prompt, opts);
     this.tasks.set(task.id, task);
     this.queue.push(task);
@@ -81,6 +81,10 @@ export class Scheduler {
         continue;
       }
 
+      // Sort queue: high → normal → low before picking the next task
+      const priorityOrder: Record<string, number> = { high: 0, normal: 1, low: 2 };
+      this.queue.sort((a, b) => (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1));
+
       const task = this.queue.shift()!;
       const worker = await this.pool.acquire();
       if (!worker) {
@@ -105,11 +109,14 @@ export class Scheduler {
       await this.runner.run(task, workerPath, this.onEvent);
 
       const shouldMerge = task.status === "success";
-      const merged = await this.pool.release(workerName, shouldMerge);
+      const mergeResult = await this.pool.release(workerName, shouldMerge);
 
-      if (shouldMerge && !merged) {
-        task.error += "\nMerge conflict";
-        console.warn(`[scheduler] ${task.id} merge conflict`);
+      if (shouldMerge && !mergeResult.merged) {
+        const fileList = mergeResult.conflictFiles?.length
+          ? `: ${mergeResult.conflictFiles.join(", ")}`
+          : "";
+        task.error = (task.error ?? "") + `\nMerge conflict${fileList}`;
+        console.warn(`[scheduler] ${task.id} merge conflict${fileList}`);
       }
     } catch (err: any) {
       console.error(`[scheduler] ${task.id} error:`, err.message);

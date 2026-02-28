@@ -127,7 +127,7 @@ export class WebServer {
 
     // API: submit task
     app.post("/api/tasks", async (c) => {
-      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown };
+      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown };
       try {
         body = await c.req.json();
       } catch {
@@ -142,9 +142,13 @@ export class WebServer {
       if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget <= 0)) {
         return c.json({ error: "maxBudget must be a positive number" }, 400);
       }
+      if (body.priority !== undefined && !["low", "normal", "high"].includes(body.priority as string)) {
+        return c.json({ error: 'priority must be "low", "normal", or "high"' }, 400);
+      }
       const task = this._scheduler.submit(body.prompt, {
         timeout: body.timeout as number | undefined,
         maxBudget: body.maxBudget as number | undefined,
+        priority: body.priority as "low" | "normal" | "high" | undefined,
       });
       return c.json({ id: task.id, status: task.status }, 201);
     });

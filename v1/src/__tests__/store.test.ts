@@ -29,6 +29,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     id: "task-001",
     prompt: "Test prompt",
     status: "pending",
+    priority: "normal",
     output: "",
     error: "",
     events: [],

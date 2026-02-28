@@ -1,9 +1,11 @@
 export type TaskStatus = "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
+export type TaskPriority = "low" | "normal" | "high";
 
 export interface Task {
   id: string;
   prompt: string;
   status: TaskStatus;
+  priority: TaskPriority;
   worktree?: string;
   output: string;
   error: string;
@@ -45,11 +47,12 @@ export interface Config {
   systemPrompt: string;
 }
 
-export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries">>): Task {
+export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority">>): Task {
   return {
     id: opts?.id ?? crypto.randomUUID().slice(0, 8),
     prompt,
     status: "pending",
+    priority: opts?.priority ?? "normal",
     output: "",
     error: "",
     events: [],
