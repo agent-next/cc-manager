@@ -182,4 +182,102 @@ describe("Store", () => {
       cleanup();
     }
   });
+
+  describe("search", () => {
+    it("finds tasks matching prompt keyword", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        store.save(makeTask({ id: "sr1", prompt: "Write a hello world function" }));
+        store.save(makeTask({ id: "sr2", prompt: "Fix the login bug" }));
+        store.save(makeTask({ id: "sr3", prompt: "Add hello banner to homepage" }));
+
+        const results = store.search("hello");
+
+        assert.strictEqual(results.length, 2);
+        const ids = results.map((t) => t.id).sort();
+        assert.deepStrictEqual(ids, ["sr1", "sr3"]);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("returns empty array for no match", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        store.save(makeTask({ id: "sr4", prompt: "Write a function" }));
+
+        const results = store.search("zzznomatchzzz");
+
+        assert.deepStrictEqual(results, []);
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  describe("deleteOlderThan", () => {
+    it("removes tasks older than N days", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        const old = makeTask({
+          id: "old-1",
+          createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+        const recent = makeTask({
+          id: "new-1",
+          createdAt: new Date().toISOString(),
+        });
+        store.save(old);
+        store.save(recent);
+
+        const deleted = store.deleteOlderThan(10);
+
+        assert.strictEqual(deleted, 1, "should delete exactly one old task");
+        assert.strictEqual(store.get("old-1"), null, "old task should be gone");
+        assert.ok(store.get("new-1") !== null, "recent task should remain");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("keeps recent tasks", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        store.save(makeTask({ id: "rec-1", createdAt: new Date().toISOString() }));
+        store.save(
+          makeTask({
+            id: "rec-2",
+            createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+          }),
+        );
+
+        const deleted = store.deleteOlderThan(30);
+
+        assert.strictEqual(deleted, 0, "no tasks should be deleted");
+        assert.strictEqual(store.list().length, 2);
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  describe("getRecentErrors", () => {
+    it("returns failed tasks sorted by date", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        store.save(makeTask({ id: "err-1", status: "failed", createdAt: "2024-01-01T00:00:00.000Z" }));
+        store.save(makeTask({ id: "err-2", status: "failed", createdAt: "2024-01-03T00:00:00.000Z" }));
+        store.save(makeTask({ id: "err-3", status: "success", createdAt: "2024-01-02T00:00:00.000Z" }));
+        store.save(makeTask({ id: "err-4", status: "timeout", createdAt: "2024-01-02T00:00:00.000Z" }));
+
+        const errors = store.getRecentErrors(10);
+
+        const ids = errors.map((t) => t.id);
+        assert.ok(!ids.includes("err-3"), "success task should not appear");
+        assert.strictEqual(errors[0].id, "err-2", "newest failed task should be first");
+      } finally {
+        cleanup();
+      }
+    });
+  });
 });
