@@ -3,6 +3,7 @@ import { createTask } from "./types.js";
 import { WorktreePool } from "./worktree-pool.js";
 import { AgentRunner } from "./agent-runner.js";
 import { Store } from "./store.js";
+import { log } from "./logger.js";
 
 type EventCallback = (event: Record<string, unknown>) => void;
 
@@ -22,18 +23,18 @@ export class Scheduler {
   start(): void {
     this.running = true;
     this.loop();
-    console.log("[scheduler] started");
+    log("info", "scheduler started");
   }
 
   async stop(): Promise<void> {
-    console.log("[scheduler] stopping...");
+    log("info", "scheduler stopping");
     this.running = false;
     // Wait for active workers
     while (this.activeWorkers.size > 0) {
-      console.log(`[scheduler] waiting for ${this.activeWorkers.size} workers...`);
+      log("info", "waiting for workers", { active: this.activeWorkers.size });
       await new Promise((r) => setTimeout(r, 1000));
     }
-    console.log("[scheduler] stopped");
+    log("info", "scheduler stopped");
   }
 
   submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string }): Task {
@@ -42,7 +43,7 @@ export class Scheduler {
     this.queue.push(task);
     this.store.save(task);
     this.onEvent?.({ type: "task_queued", taskId: task.id, queueSize: this.queue.length });
-    console.log(`[scheduler] queued: ${task.id}`);
+    log("info", "task queued", { taskId: task.id, queueSize: this.queue.length });
     return task;
   }
 
@@ -103,7 +104,7 @@ export class Scheduler {
       if (task.dependsOn) {
         const dep = this.tasks.get(task.dependsOn) ?? this.store.get(task.dependsOn) ?? undefined;
         if (dep?.status !== "success") {
-          console.log(`[scheduler] ${task.id} waiting on dependency ${task.dependsOn}`);
+          log("info", "task waiting on dependency", { taskId: task.id, dependsOn: task.dependsOn });
           this.queue.push(task);
           await new Promise((r) => setTimeout(r, 500));
           continue;
@@ -129,7 +130,7 @@ export class Scheduler {
   private async executeAndRelease(task: Task, workerName: string, workerPath: string): Promise<void> {
     let shouldRetry = false;
     try {
-      console.log(`[scheduler] ${task.id} → ${workerName}`);
+      log("info", "task started", { taskId: task.id, worker: workerName });
       await this.runner.run(task, workerPath, this.onEvent);
 
       const shouldMerge = task.status === "success";
@@ -140,10 +141,10 @@ export class Scheduler {
           ? `: ${mergeResult.conflictFiles.join(", ")}`
           : "";
         task.error = (task.error ?? "") + `\nMerge conflict${fileList}`;
-        console.warn(`[scheduler] ${task.id} merge conflict${fileList}`);
+        log("warn", "task merge conflict", { taskId: task.id, files: mergeResult.conflictFiles ?? [] });
       }
     } catch (err: any) {
-      console.error(`[scheduler] ${task.id} error:`, err.message);
+      log("error", "task error", { taskId: task.id, error: err.message });
       task.status = "failed";
       task.error = err.message;
       task.completedAt = new Date().toISOString();
@@ -156,7 +157,7 @@ export class Scheduler {
         task.status = "pending";
         task.error = "";
         task.completedAt = undefined;
-        console.log(`[scheduler] retrying: ${task.id} (attempt ${task.retryCount}/${task.maxRetries})`);
+        log("info", "task retrying", { taskId: task.id, attempt: task.retryCount, maxRetries: task.maxRetries });
       }
       this.activeWorkers.delete(workerName);
       this.store.save(task);
