@@ -44,9 +44,14 @@ export class WorktreePool {
         await this.resetWorktree({ name, path: workerPath, branch, busy: false });
       } else {
         await this.git("branch", "-D", branch).catch(() => {});
-        const r = await this.git("worktree", "add", "-b", branch, workerPath, "main").catch(() => null);
-        if (!r) {
-          await this.git("worktree", "add", workerPath, branch).catch(() => {});
+        try {
+          const r = await this.git("worktree", "add", "-b", branch, workerPath, "main").catch(() => null);
+          if (!r) {
+            await this.git("worktree", "add", workerPath, branch);
+          }
+        } catch (err) {
+          log("error", "[pool] git worktree add failed", { name, workerPath, err: String(err) });
+          throw new Error(`Failed to create worktree '${name}' at '${workerPath}': ${String(err)}`);
         }
       }
 
@@ -76,7 +81,12 @@ export class WorktreePool {
           meta.busySince = Date.now();
           meta.taskCount += 1;
           this.workerMeta.set(w.name, meta);
-          await this.resetWorktree(w);
+          try {
+            await this.resetWorktree(w);
+          } catch (err) {
+            log("error", "[pool] acquire: failed to reset worktree", { worker: w.name, err: String(err) });
+            throw new Error(`Failed to reset worktree '${w.name}' during acquire: ${String(err)}`);
+          }
           return w;
         }
       }
@@ -95,7 +105,12 @@ export class WorktreePool {
 
       let result: { merged: boolean; conflictFiles?: string[] } = { merged: true };
       if (merge) {
-        result = await this.mergeToMain(w);
+        try {
+          result = await this.mergeToMain(w);
+        } catch (err) {
+          log("error", "[pool] release: mergeToMain failed", { worker: w.name, err: String(err) });
+          throw new Error(`Failed to merge worktree '${w.name}' to main: ${String(err)}`);
+        }
       }
 
       w.busy = false;
@@ -259,6 +274,20 @@ export class WorktreePool {
       const uptime = meta.busySince !== undefined ? now - meta.busySince : undefined;
       return { ...w, uptime, taskCount: meta.taskCount };
     });
+  }
+
+  getWorkerStats(): { total: number; busy: number; available: number; stale: number } {
+    const STALE_MS = 5 * 60 * 1000; // 5 minutes
+    let busy = 0;
+    let stale = 0;
+    for (const w of this.workers.values()) {
+      if (w.busy) {
+        busy++;
+        if (this.isStale(w, STALE_MS)) stale++;
+      }
+    }
+    const total = this.workers.size;
+    return { total, busy, available: total - busy, stale };
   }
 
   private async git(...args: string[]) {
