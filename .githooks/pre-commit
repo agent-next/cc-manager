@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Only run checks when v1/ files are staged
-if ! git diff --cached --name-only | grep -q '^v1/'; then
+# Only run checks when src/ files are staged
+if ! git diff --cached --name-only | grep -q '^src/'; then
   exit 0
 fi
 
 echo "pre-commit: type checking..."
-cd v1 && npx tsc --noEmit
+npx tsc --noEmit
 
 echo "pre-commit: running tests..."
 # Clear GIT_DIR/GIT_INDEX_FILE so tests that create temp git repos work correctly

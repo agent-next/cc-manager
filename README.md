@@ -36,7 +36,7 @@ A multi-agent orchestrator that runs parallel coding agents in git worktrees. Su
 ## Documentation
 
 - GitHub Pages: <https://agent-next.github.io/cc-manager/>
-- Docs home (in repo): [docs/index.html](docs/index.html)
+- Docs home (in repo): [docs/site/index.html](docs/site/index.html)
 - Getting started: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 - Operations guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Configuration reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
@@ -83,8 +83,6 @@ yarn global add cc-manager
 Or run from source (no global install):
 
 ```bash
-cd v1
-
 # npm
 npm install && npm run build
 
@@ -139,64 +137,9 @@ curl -X POST http://localhost:8080/api/tasks \
 
 ## API
 
-### Task Management
+See [docs/API.md](docs/API.md) for the complete API reference with request/response examples.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/tasks` | Submit a task |
-| `POST` | `/api/tasks/batch` | Submit multiple tasks |
-| `GET` | `/api/tasks` | List tasks (`?status`, `?limit`, `?offset`, `?tag`) |
-| `GET` | `/api/tasks/search?q=keyword` | Search tasks by prompt/output |
-| `GET` | `/api/tasks/errors` | Recent failures |
-| `GET` | `/api/tasks/:id` | Full task detail with queue position |
-| `GET` | `/api/tasks/:id/diff` | Git diff for completed task |
-| `GET` | `/api/tasks/:id/output` | Raw task output |
-| `POST` | `/api/tasks/:id/retry` | Requeue a failed task |
-| `DELETE` | `/api/tasks/:id` | Cancel a pending task |
-| `DELETE` | `/api/tasks/cleanup?days=30` | Remove old completed tasks |
-
-### Monitoring
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/stats` | Queue depth, workers, cost breakdown |
-| `GET` | `/api/stats/daily` | Daily stats (total, success, cost) |
-| `GET` | `/api/workers` | Worker pool status |
-| `GET` | `/api/events` | SSE stream |
-| `GET` | `/api/health` | Health check |
-| `GET` | `/api/budget` | Budget status and remaining spend |
-| `GET` | `/api/insights` | Historical performance metrics |
-
-### Self-Evolution
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/evolution/log` | Evolution analysis history |
-| `POST` | `/api/evolution/analyze` | Trigger round analysis |
-| `GET` | `/api/docs` | API documentation |
-
-### POST /api/tasks body
-
-```json
-{
-  "prompt": "Refactor the auth module to use JWT",
-  "timeout": 300,
-  "maxBudget": 5,
-  "priority": "high",
-  "tags": ["auth", "refactor"],
-  "agent": "claude",
-  "webhookUrl": "https://example.com/hook"
-}
-```
-
-### SSE events on GET /api/events
-
-| Event | When |
-|-------|------|
-| `task_queued` | Task accepted into queue |
-| `task_started` | Worker assigned, agent running |
-| `task_progress` | Agent output streaming |
-| `task_final` | Completed (success/failed/timeout) |
+Quick overview: 20+ REST endpoints for task management, monitoring, and self-evolution. Real-time updates via SSE at `GET /api/events`.
 
 ## Multi-Agent Architecture
 
@@ -220,24 +163,7 @@ pending → running → success  (branch merged to main)
 
 ## Project Structure
 
-```
-cc-manager/
-├── v1/
-│   ├── src/
-│   │   ├── index.ts           # CLI entry point (Commander.js)
-│   │   ├── scheduler.ts       # Priority queue, retry, budget enforcement
-│   │   ├── agent-runner.ts    # Multi-agent CLI spawning + code review
-│   │   ├── worktree-pool.ts   # Git worktree lifecycle
-│   │   ├── server.ts          # Hono REST API + SSE
-│   │   ├── store.ts           # SQLite persistence (better-sqlite3)
-│   │   ├── types.ts           # Shared TypeScript types
-│   │   ├── logger.ts          # Structured JSON logger with levels
-│   │   ├── web/index.html     # Dashboard (dark/light theme)
-│   │   └── __tests__/         # BDD-style test suites (71 tests)
-│   ├── package.json
-│   └── tsconfig.json
-└── CLAUDE.md                  # Agent instructions & project spec
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the module dependency graph and data flow.
 
 ## Tech Stack
 

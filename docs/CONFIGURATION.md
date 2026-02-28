@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This document describes all configuration options for cc-manager (v1).
+This document describes all configuration options for cc-manager.
 
 ---
 
