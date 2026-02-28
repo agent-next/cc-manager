@@ -36,7 +36,7 @@ export class Scheduler {
     console.log("[scheduler] stopped");
   }
 
-  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority }): Task {
+  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string }): Task {
     const task = createTask(prompt, opts);
     this.tasks.set(task.id, task);
     this.queue.push(task);
@@ -86,6 +86,18 @@ export class Scheduler {
       this.queue.sort((a, b) => (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1));
 
       const task = this.queue.shift()!;
+
+      // Dependency check: skip if dependency hasn't completed successfully yet
+      if (task.dependsOn) {
+        const dep = this.tasks.get(task.dependsOn) ?? this.store.get(task.dependsOn) ?? undefined;
+        if (dep?.status !== "success") {
+          console.log(`[scheduler] ${task.id} waiting on dependency ${task.dependsOn}`);
+          this.queue.push(task);
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+      }
+
       const worker = await this.pool.acquire();
       if (!worker) {
         this.queue.unshift(task);

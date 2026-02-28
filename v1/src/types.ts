@@ -21,6 +21,7 @@ export interface Task {
   durationMs: number;
   retryCount: number;
   maxRetries: number;
+  dependsOn?: string;
 }
 
 export interface TaskEvent {
@@ -47,7 +48,7 @@ export interface Config {
   systemPrompt: string;
 }
 
-export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority">>): Task {
+export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn">>): Task {
   return {
     id: opts?.id ?? crypto.randomUUID().slice(0, 8),
     prompt,
@@ -65,5 +66,6 @@ export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "tim
     durationMs: 0,
     retryCount: 0,
     maxRetries: opts?.maxRetries ?? 2,
+    dependsOn: opts?.dependsOn,
   };
 }
