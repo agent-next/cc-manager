@@ -1,8 +1,0 @@
-node_modules/
-dist/
-.worktrees/
-.cc-manager.db
-.cc-manager.db-wal
-.cc-manager.db-shm
-*.log
-.DS_Store
