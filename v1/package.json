@@ -4,7 +4,8 @@
   "description": "Multi-agent orchestrator for Claude Code",
   "type": "module",
   "bin": {
-    "cc-manager": "dist/index.js"
+    "cc-manager": "dist/index.js",
+    "cc-m": "dist/cli.js"
   },
   "keywords": [
     "claude",

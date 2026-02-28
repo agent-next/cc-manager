@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, lstatSync } from "node:fs";
 import path from "node:path";
 import type { WorkerInfo } from "./types.js";
 import { log } from "./logger.js";
@@ -33,7 +33,8 @@ export class WorktreePool {
     const wtDir = path.join(this.repoPath, ".worktrees");
     mkdirSync(wtDir, { recursive: true });
 
-    await this.git("checkout", "main").catch(() => {});
+    // Do NOT checkout main here — it changes the repo's working tree HEAD,
+    // which corrupts the repo when --repo points to the current directory.
 
     const worktreePromises = Array.from({ length: this.poolSize }, async (_, i) => {
       const name = `worker-${i}`;
@@ -153,9 +154,38 @@ export class WorktreePool {
     }
 
     try {
-      await this.gitIn(w.path, "clean", "-fdx");
+      // Exclude node_modules from clean — we symlink it for build verification
+      await this.gitIn(w.path, "clean", "-fdx", "-e", "node_modules", "-e", "v1/node_modules");
     } catch (err) {
       log("error", "[pool] clean failed", { worker: w.name, err: String(err) });
+    }
+
+    // Ensure node_modules symlinks exist so agents can run npx tsc
+    this.ensureNodeModulesSymlink(w.path);
+  }
+
+  /** Symlink node_modules from the main repo into the worktree so build tools work. */
+  private ensureNodeModulesSymlink(worktreePath: string): void {
+    const mainNM = path.join(this.repoPath, "v1", "node_modules");
+    const wtNM = path.join(worktreePath, "v1", "node_modules");
+
+    if (!existsSync(mainNM)) return;
+
+    const wtV1 = path.join(worktreePath, "v1");
+    if (!existsSync(wtV1)) mkdirSync(wtV1, { recursive: true });
+
+    try {
+      const stat = lstatSync(wtNM);
+      if (stat.isSymbolicLink()) return;
+    } catch {
+      // Does not exist — create it
+    }
+
+    try {
+      symlinkSync(mainNM, wtNM, "dir");
+      log("debug", "[pool] symlinked node_modules", { worktree: worktreePath });
+    } catch (err) {
+      log("warn", "[pool] failed to symlink node_modules", { worktree: worktreePath, err: String(err) });
     }
   }
 
@@ -166,20 +196,30 @@ export class WorktreePool {
 
     log("info", "[pool] merging branch", { branch: w.branch, target: "main" });
 
-    // Merge without checking out — stay on main
+    // Safe merge: update the main ref without touching HEAD or working tree.
+    // First try fast-forward via `git fetch . <branch>:main`.
+    // If that fails (non-ff), do a real merge in the worktree instead.
     try {
-      await this.git("merge", w.branch, "--no-edit");
+      await this.git("fetch", ".", `${w.branch}:main`);
     } catch {
-      // Collect conflicting file names before aborting
-      let conflictFiles: string[] = [];
+      // Non-fast-forward — merge in the worktree where it's safe
       try {
-        const { stdout } = await this.git("diff", "--name-only", "--diff-filter=U");
-        conflictFiles = stdout.trim().split("\n").filter(Boolean);
-      } catch {}
+        await this.gitIn(w.path, "checkout", "main");
+        await this.gitIn(w.path, "merge", w.branch, "--no-edit");
+        // Push the merged main back to the main repo ref
+        await this.git("fetch", w.path, "main:main");
+      } catch {
+        let conflictFiles: string[] = [];
+        try {
+          const { stdout } = await this.gitIn(w.path, "diff", "--name-only", "--diff-filter=U");
+          conflictFiles = stdout.trim().split("\n").filter(Boolean);
+        } catch {}
 
-      log("warn", "[pool] merge conflict, aborting", { branch: w.branch });
-      await this.git("merge", "--abort").catch(() => {});
-      return { merged: false, conflictFiles };
+        log("warn", "[pool] merge conflict, aborting", { branch: w.branch });
+        await this.gitIn(w.path, "merge", "--abort").catch(() => {});
+        await this.gitIn(w.path, "checkout", w.branch).catch(() => {});
+        return { merged: false, conflictFiles };
+      }
     }
 
     // Reset worktree to latest main

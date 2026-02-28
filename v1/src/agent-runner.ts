@@ -275,6 +275,7 @@ export class AgentRunner {
         "-p",
         "--dangerously-skip-permissions",
         "--output-format", "stream-json",
+        "--verbose",
         "--model", this.model,
       ];
       if (task.maxBudget > 0) {
