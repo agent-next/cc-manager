@@ -33,7 +33,8 @@ export class Store {
         duration_ms INTEGER DEFAULT 0,
         retry_count INTEGER DEFAULT 0,
         max_retries INTEGER DEFAULT 2,
-        priority TEXT DEFAULT 'normal'
+        priority TEXT DEFAULT 'normal',
+        tags TEXT DEFAULT '[]'
       )
     `);
     // Add max_retries column to existing databases that predate this migration
@@ -48,6 +49,12 @@ export class Store {
     } catch {
       // Column already exists — safe to ignore
     }
+    // Add tags column to existing databases that predate this migration
+    try {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN tags TEXT DEFAULT '[]'");
+    } catch {
+      // Column already exists — safe to ignore
+    }
   }
 
   save(task: Task): void {
@@ -55,8 +62,8 @@ export class Store {
       INSERT OR REPLACE INTO tasks
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
-       token_input, token_output, duration_ms, retry_count, max_retries, priority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       token_input, token_output, duration_ms, retry_count, max_retries, priority, tags)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       task.id, task.prompt, task.status, task.worktree ?? null,
       task.output, task.error, JSON.stringify(task.events),
@@ -64,6 +71,7 @@ export class Store {
       task.timeout, task.maxBudget, task.costUsd,
       task.tokenInput, task.tokenOutput, task.durationMs, task.retryCount, task.maxRetries,
       task.priority ?? "normal",
+      JSON.stringify(task.tags ?? []),
     );
   }
 
@@ -116,6 +124,7 @@ export class Store {
       retryCount: row.retry_count,
       maxRetries: row.max_retries ?? 2,
       priority: (row.priority ?? "normal") as import("./types.js").TaskPriority,
+      tags: JSON.parse(row.tags || "[]"),
     };
   }
 

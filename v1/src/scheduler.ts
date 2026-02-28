@@ -37,7 +37,7 @@ export class Scheduler {
     log("info", "scheduler stopped");
   }
 
-  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string }): Task {
+  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string; webhookUrl?: string; tags?: string[] }): Task {
     const task = createTask(prompt, opts);
     this.tasks.set(task.id, task);
     this.queue.push(task);
@@ -162,6 +162,23 @@ export class Scheduler {
       this.activeWorkers.delete(workerName);
       this.store.save(task);
       if (!shouldRetry) {
+        if (task.webhookUrl) {
+          try {
+            await fetch(task.webhookUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                taskId: task.id,
+                status: task.status,
+                costUsd: task.costUsd,
+                durationMs: task.durationMs,
+                output: task.output,
+              }),
+            });
+          } catch (webhookErr: any) {
+            log("warn", "webhook delivery failed", { taskId: task.id, url: task.webhookUrl, error: webhookErr.message });
+          }
+        }
         this.onEvent?.({ type: "task_final", taskId: task.id, status: task.status });
       }
     }

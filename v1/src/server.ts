@@ -94,11 +94,12 @@ export class WebServer {
     app.get("/api/stats", (c) => c.json(this._scheduler.getStats()));
 
     // API: list tasks
-    // Query params: ?status=running, ?q=keyword, ?limit=10
+    // Query params: ?status=running, ?q=keyword, ?limit=10, ?tag=name
     app.get("/api/tasks", (c) => {
       const statusFilter = c.req.query("status");
       const keyword = c.req.query("q");
       const limitParam = c.req.query("limit");
+      const tagFilter = c.req.query("tag");
 
       let tasks = this._scheduler.listTasks();
 
@@ -109,6 +110,10 @@ export class WebServer {
       if (keyword) {
         const lower = keyword.toLowerCase();
         tasks = tasks.filter((t) => t.prompt.toLowerCase().includes(lower));
+      }
+
+      if (tagFilter) {
+        tasks = tasks.filter((t) => t.tags?.includes(tagFilter));
       }
 
       if (limitParam !== undefined) {
@@ -127,6 +132,7 @@ export class WebServer {
         createdAt: t.createdAt,
         completedAt: t.completedAt,
         durationMs: t.durationMs,
+        tags: t.tags,
       }));
       return c.json(result);
     });
@@ -195,7 +201,7 @@ export class WebServer {
         );
       }
 
-      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown };
+      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown; tags?: unknown; webhookUrl?: unknown };
       try {
         body = await c.req.json();
       } catch {
@@ -213,10 +219,31 @@ export class WebServer {
       if (body.priority !== undefined && !["low", "normal", "high"].includes(body.priority as string)) {
         return c.json({ error: 'priority must be "low", "normal", or "high"' }, 400);
       }
+      if (body.webhookUrl !== undefined && (typeof body.webhookUrl !== "string" || !body.webhookUrl.startsWith("http"))) {
+        return c.json({ error: "webhookUrl must be a URL starting with http" }, 400);
+      }
+      if (body.tags !== undefined) {
+        if (!Array.isArray(body.tags)) {
+          return c.json({ error: "tags must be an array of strings" }, 400);
+        }
+        if (body.tags.length > 10) {
+          return c.json({ error: "tags cannot exceed 10 items" }, 400);
+        }
+        for (let i = 0; i < body.tags.length; i++) {
+          if (typeof body.tags[i] !== "string") {
+            return c.json({ error: `tags[${i}] must be a string` }, 400);
+          }
+          if ((body.tags[i] as string).length > 50) {
+            return c.json({ error: `tags[${i}] must be 50 characters or fewer` }, 400);
+          }
+        }
+      }
       const task = this._scheduler.submit(body.prompt, {
         timeout: body.timeout as number | undefined,
         maxBudget: body.maxBudget as number | undefined,
         priority: body.priority as "low" | "normal" | "high" | undefined,
+        tags: body.tags as string[] | undefined,
+        webhookUrl: body.webhookUrl as string | undefined,
       });
       return c.json({ id: task.id, status: task.status }, 201);
     });

@@ -22,6 +22,8 @@ export interface Task {
   retryCount: number;
   maxRetries: number;
   dependsOn?: string;
+  tags?: string[];
+  webhookUrl?: string;
 }
 
 export interface TaskEvent {
@@ -48,7 +50,7 @@ export interface Config {
   systemPrompt: string;
 }
 
-export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn">>): Task {
+export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl">>): Task {
   return {
     id: opts?.id ?? crypto.randomUUID().slice(0, 8),
     prompt,
@@ -67,5 +69,7 @@ export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "tim
     retryCount: 0,
     maxRetries: opts?.maxRetries ?? 2,
     dependsOn: opts?.dependsOn,
+    tags: opts?.tags,
+    webhookUrl: opts?.webhookUrl,
   };
 }
