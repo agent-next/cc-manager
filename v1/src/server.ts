@@ -274,12 +274,15 @@ export class WebServer {
         if (typeof body.prompts[i] !== "string" || (body.prompts[i] as string).trim() === "") {
           return c.json({ error: `prompts[${i}] must be a non-empty string` }, 400);
         }
+        if ((body.prompts[i] as string).length > 2000) {
+          return c.json({ error: `prompts[${i}] must be 2000 characters or fewer` }, 400);
+        }
       }
-      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout <= 0)) {
-        return c.json({ error: "timeout must be a positive number" }, 400);
+      if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout < 1 || body.timeout > 3600)) {
+        return c.json({ error: "timeout must be a number between 1 and 3600" }, 400);
       }
-      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget <= 0)) {
-        return c.json({ error: "maxBudget must be a positive number" }, 400);
+      if (body.maxBudget !== undefined && (typeof body.maxBudget !== "number" || body.maxBudget < 0 || body.maxBudget > 100)) {
+        return c.json({ error: "maxBudget must be a number between 0 and 100" }, 400);
       }
       const results = (body.prompts as string[]).map((prompt) => {
         const task = this._scheduler.submit(prompt, {
