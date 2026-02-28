@@ -76,6 +76,12 @@ export class Store {
     } catch {
       // Column already exists — safe to ignore
     }
+    // Add agent column to existing databases
+    try {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT DEFAULT 'claude'");
+    } catch {
+      // Column already exists — safe to ignore
+    }
     // Indexes for common query patterns
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
@@ -103,8 +109,8 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       task.id, task.prompt, task.status, task.worktree ?? null,
       task.output, task.error, JSON.stringify(task.events),
@@ -114,6 +120,7 @@ export class Store {
       task.priority ?? "normal",
       JSON.stringify(task.tags ?? []),
       task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
+      task.agent ?? "claude",
     );
   }
 
@@ -128,8 +135,8 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const runAll = this.db.transaction((batch: Task[]) => {
       for (const task of batch) {
@@ -142,6 +149,7 @@ export class Store {
           task.priority ?? "normal",
           JSON.stringify(task.tags ?? []),
           task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
+          task.agent ?? "claude",
         );
       }
     });
@@ -163,8 +171,8 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.transaction(() => {
       for (const task of tasks) {
@@ -177,6 +185,7 @@ export class Store {
           task.priority ?? "normal",
           JSON.stringify(task.tags ?? []),
           task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
+          task.agent ?? "claude",
         );
       }
     });
@@ -211,6 +220,7 @@ export class Store {
       dependsOn:   { col: "depends_on" },
       webhookUrl:  { col: "webhook_url" },
       summary:     { col: "summary" },
+      agent:       { col: "agent" },
     };
 
     const setClauses: string[] = [];
@@ -358,6 +368,7 @@ export class Store {
       dependsOn: row.depends_on ?? undefined,
       webhookUrl: row.webhook_url ?? undefined,
       summary: row.summary ?? undefined,
+      agent: row.agent ?? "claude",
     };
   }
 
@@ -404,17 +415,17 @@ export class Store {
   }
 
   /** Returns one entry per calendar day for the last 7 days (newest first).
-   *  Days with no tasks are omitted.  `successRate` is in [0, 1]. */
-  getDailyStats(): Array<{ date: string; count: number; cost: number; successRate: number }> {
+   *  Returns `total`, `success`, `cost`, and computed `successRate`. */
+  getDailyStats(): Array<{ date: string; total: number; success: number; cost: number; successRate: number }> {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     const rows = this.db
       .prepare(
         `SELECT
           substr(created_at, 1, 10)                          AS date,
-          COUNT(*)                                           AS count,
+          COUNT(*)                                           AS total,
           COALESCE(SUM(cost_usd), 0)                         AS cost,
-          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success
         FROM tasks
         WHERE created_at >= ?
         GROUP BY date
@@ -424,9 +435,10 @@ export class Store {
 
     return rows.map((r) => ({
       date: r.date as string,
-      count: r.count as number,
+      total: r.total as number,
+      success: r.success as number,
       cost: r.cost as number,
-      successRate: r.count > 0 ? (r.success_count as number) / (r.count as number) : 0,
+      successRate: r.total > 0 ? (r.success as number) / (r.total as number) : 0,
     }));
   }
 

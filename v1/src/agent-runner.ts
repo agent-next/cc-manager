@@ -1,6 +1,6 @@
 import type { Task, TaskEvent } from "./types.js";
 import { log } from "./logger.js";
-import { execSync } from "child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 type EventCallback = (event: Record<string, unknown>) => void;
@@ -9,6 +9,7 @@ interface RunningTaskEntry {
   id: string;
   startMs: number;
   costUsd: number;
+  process?: ChildProcess;
 }
 
 export interface RunningTaskInfo {
@@ -29,6 +30,7 @@ export class AgentRunner {
   constructor(
     private model: string = "claude-sonnet-4-6",
     private systemPrompt: string = "",
+    private defaultAgent: string = "claude",
   ) {}
 
   /** Estimates USD cost for a given token usage and model. */
@@ -84,14 +86,13 @@ export class AgentRunner {
       // CLAUDE.md not found – skip gracefully
     }
 
-    const lower = task.prompt.toLowerCase();
-
     // Always-included instructions
     parts.push("- Always use `.js` extensions in import paths (e.g. `import { foo } from \"./bar.js\"`).");
     parts.push("- After making changes, run `npx tsc` to verify there are no type errors.");
     parts.push("- Stage and commit all changes with `git add -A && git commit -m \"feat: <brief summary>\"`.");
 
     // Conditional: test or spec
+    const lower = task.prompt.toLowerCase();
     if (/\btest\b|\bspec\b/.test(lower)) {
       parts.push("- Use `node:test` as the test runner and `assert/strict` for assertions.");
     }
@@ -110,12 +111,9 @@ export class AgentRunner {
     return parts.join("\n");
   }
 
+  /** Runs a task using the appropriate CLI agent. */
   async run(task: Task, cwd: string, onEvent?: EventCallback): Promise<Task> {
-    const { query } = await import("@anthropic-ai/claude-agent-sdk").catch(() => {
-      throw new Error(
-        "missing dependency: @anthropic-ai/claude-agent-sdk is not installed – run: npm install @anthropic-ai/claude-agent-sdk",
-      );
-    });
+    const agent = task.agent ?? this.defaultAgent;
 
     task.status = "running";
     task.startedAt = new Date().toISOString();
@@ -123,150 +121,34 @@ export class AgentRunner {
 
     this._runningTasks.set(task.id, { id: task.id, startMs, costUsd: 0 });
 
-    log("info", "task start", { taskId: task.id, worker: task.worktree });
-    onEvent?.({ type: "task_started", taskId: task.id, worker: task.worktree });
-
-    const prompt = `${task.prompt}
-
----
-
-## Instructions
-
-- **Minimal changes**: Only modify what is necessary to complete the task. Do not refactor, reformat, or touch unrelated code.
-- **TypeScript imports**: Always use \`.js\` extensions in import paths (e.g. \`import { foo } from "./bar.js"\`).
-- **Type checking**: After making changes, run \`npx tsc\` to catch type errors.
-- **Fix before committing**: If \`npx tsc\` fails, fix all errors before proceeding to commit.
-- **Commit when done**: Stage and commit all changes with \`git add -A && git commit -m "feat: <brief summary>"\`.`;
-
-    const abortController = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    if (task.timeout > 0) {
-      timer = setTimeout(() => {
-        abortController.abort();
-        task.status = "timeout";
-      }, task.timeout * 1000);
-    }
+    log("info", "task start", { taskId: task.id, worker: task.worktree, agent });
+    onEvent?.({ type: "task_started", taskId: task.id, worker: task.worktree, agent });
 
     try {
-      const q = query({
-        prompt,
-        options: {
-          cwd,
-          model: this.model,
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          maxTurns: 50,
-          ...(task.maxBudget > 0 ? { maxBudgetUsd: task.maxBudget } : {}),
-          ...(this.systemPrompt
-            ? {
-                systemPrompt: {
-                  type: "preset" as const,
-                  preset: "claude_code" as const,
-                  append: this.systemPrompt,
-                },
-              }
-            : {}),
-          abortController,
-        },
-      });
-
-      let messageCount = 0;
-
-      for await (const msg of q) {
-        messageCount++;
-
-        if (messageCount % 10 === 0) {
-          onEvent?.({
-            type: "task_progress",
-            taskId: task.id,
-            messageCount,
-            elapsedMs: Date.now() - startMs,
-          });
-        }
-
-        const evt: TaskEvent = {
-          type: msg.type,
-          timestamp: new Date().toISOString(),
-        };
-
-        if (msg.type === "assistant" && msg.message?.content) {
-          const text = (msg.message.content as Array<{ type: string; text?: string }>)
-            .filter((b) => b.type === "text" && b.text)
-            .map((b) => b.text as string)
-            .join("");
-          if (text) {
-            onEvent?.({ type: "task_log", taskId: task.id, text });
-
-            // Detect compilation errors mentioned in agent output
-            if (/error TS\d+|compilation (failed|error)|tsc.*error|\berror\b.*\.ts\(\d+/i.test(text)) {
-              const compileErrEvt: TaskEvent = {
-                type: "compilation_error",
-                timestamp: new Date().toISOString(),
-                data: { snippet: text.slice(0, 500) },
-              };
-              task.events.push(compileErrEvt);
-              onEvent?.({ type: "task_event", taskId: task.id, event: compileErrEvt });
-            }
-          }
-        }
-
-        if (msg.type === "result") {
-          task.durationMs = Date.now() - startMs;
-          task.costUsd = msg.total_cost_usd ?? 0;
-          task.tokenInput = msg.usage?.input_tokens ?? 0;
-          task.tokenOutput = msg.usage?.output_tokens ?? 0;
-
-          // Update live cost in running-task tracker
-          const entry = this._runningTasks.get(task.id);
-          if (entry) entry.costUsd = task.costUsd;
-
-          if (msg.subtype === "success") {
-            task.status = "success";
-            task.output = msg.result ?? "";
-            task.summary = task.output.slice(-500);
-          } else {
-            task.status = "failed";
-            task.error = msg.subtype ?? "unknown error";
-          }
-          evt.data = { status: task.status, cost: task.costUsd };
-        }
-
-        task.events.push(evt);
-        onEvent?.({ type: "task_event", taskId: task.id, event: evt });
+      if (agent === "claude") {
+        await this.runClaude(task, cwd, startMs, onEvent);
+      } else if (agent === "codex") {
+        await this.runCodex(task, cwd, startMs, onEvent);
+      } else {
+        await this.runGeneric(task, cwd, agent, startMs, onEvent);
       }
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string; code?: string };
       const msg = e.message ?? String(err);
 
-      if (e.name === "AbortError") {
-        // Triggered by our timeout timer via abortController.abort()
+      if (e.name === "AbortError" || msg.includes("timeout")) {
         task.status = "timeout";
         task.error = `timeout: task exceeded ${task.timeout}s`;
-      } else {
-        if ((task.status as string) !== "timeout") {
-          task.status = "failed";
-        }
-        if (
-          e.code === "ECONNREFUSED" ||
-          e.code === "ENOTFOUND" ||
-          e.code === "ETIMEDOUT" ||
-          e.code === "ECONNRESET" ||
-          (e.name === "TypeError" && /fetch|network/i.test(msg))
-        ) {
-          task.error = `network: ${msg}`;
-        } else {
-          task.error = `sdk: ${msg}`;
-        }
+      } else if ((task.status as string) !== "timeout") {
+        task.status = "failed";
+        task.error = `agent: ${msg}`;
       }
-
       task.durationMs = Date.now() - startMs;
     } finally {
-      if (timer) clearTimeout(timer);
       this._runningTasks.delete(task.id);
     }
 
-    // Capture git diff for any commits made by the agent in this worktree
+    // Capture git diff for any commits made by the agent
     try {
       const diff = execSync("git diff HEAD~1..HEAD", { cwd, encoding: "utf8" });
       if (diff.trim()) {
@@ -278,8 +160,8 @@ export class AgentRunner {
         task.events.push(diffEvt);
         onEvent?.({ type: "task_event", taskId: task.id, event: diffEvt });
       }
-    } catch (_e: unknown) {
-      // No commits made, insufficient history, or git unavailable – skip silently
+    } catch {
+      // No commits or git unavailable
     }
 
     // Post-execution build verification
@@ -295,9 +177,357 @@ export class AgentRunner {
       status: task.status,
       costUsd: task.costUsd,
       durationMs: task.durationMs,
+      agent,
     });
     onEvent?.({ type: "task_completed", taskId: task.id, status: task.status });
     return task;
+  }
+
+  /** Run task using Claude CLI (non-interactive mode with stream-json output). */
+  private runClaude(task: Task, cwd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const sysPrompt = this.buildSystemPrompt(task, cwd);
+      const fullPrompt = this.buildTaskPrompt(task);
+
+      const args = [
+        "-p",
+        "--dangerously-skip-permissions",
+        "--output-format", "stream-json",
+        "--model", this.model,
+      ];
+      if (task.maxBudget > 0) {
+        args.push("--max-budget-usd", String(task.maxBudget));
+      }
+      if (sysPrompt) {
+        args.push("--append-system-prompt", sysPrompt);
+      }
+      args.push(fullPrompt);
+
+      // Clear nesting detection env vars
+      const env = { ...process.env };
+      delete env.CLAUDECODE;
+      for (const key of Object.keys(env)) {
+        if (key.startsWith("CLAUDE_CODE_")) delete env[key];
+      }
+
+      const child = spawn("claude", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+      const entry = this._runningTasks.get(task.id);
+      if (entry) entry.process = child;
+
+      let stdout = "";
+      let stderr = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      if (task.timeout > 0) {
+        timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          task.status = "timeout";
+          task.error = `timeout: task exceeded ${task.timeout}s`;
+        }, task.timeout * 1000);
+      }
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stdout += text;
+
+        // Parse JSONL lines from Claude CLI stream-json output
+        for (const line of text.split("\n").filter(Boolean)) {
+          try {
+            const msg = JSON.parse(line);
+            this.handleClaudeEvent(msg, task, startMs, onEvent);
+          } catch {
+            // Not valid JSON, accumulate as raw output
+          }
+        }
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      child.on("close", (code) => {
+        if (timer) clearTimeout(timer);
+        task.durationMs = Date.now() - startMs;
+
+        if ((task.status as string) === "timeout") {
+          resolve();
+          return;
+        }
+
+        if (code === 0 && task.status === "running") {
+          task.status = "success";
+          // Extract final output from accumulated JSONL
+          if (!task.output) {
+            task.output = this.extractClaudeOutput(stdout);
+          }
+          task.summary = task.output.slice(-500);
+        } else if (task.status === "running") {
+          task.status = "failed";
+          task.error = stderr || `claude exited with code ${code}`;
+        }
+        resolve();
+      });
+
+      child.on("error", (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  /** Parse Claude CLI stream-json event and update task metrics. */
+  private handleClaudeEvent(msg: Record<string, unknown>, task: Task, startMs: number, onEvent?: EventCallback): void {
+    const type = msg.type as string | undefined;
+
+    if (type === "assistant") {
+      const content = msg.message as { content?: Array<{ type: string; text?: string }> } | undefined;
+      if (content?.content) {
+        const text = content.content
+          .filter((b) => b.type === "text" && b.text)
+          .map((b) => b.text as string)
+          .join("");
+        if (text) {
+          onEvent?.({ type: "task_log", taskId: task.id, text });
+        }
+      }
+    }
+
+    if (type === "result") {
+      task.costUsd = (msg.total_cost_usd as number) ?? 0;
+      const usage = msg.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      task.tokenInput = usage?.input_tokens ?? 0;
+      task.tokenOutput = usage?.output_tokens ?? 0;
+      task.durationMs = Date.now() - startMs;
+
+      const entry = this._runningTasks.get(task.id);
+      if (entry) entry.costUsd = task.costUsd;
+
+      const subtype = msg.subtype as string | undefined;
+      if (subtype === "success") {
+        task.status = "success";
+        task.output = (msg.result as string) ?? "";
+        task.summary = task.output.slice(-500);
+      } else {
+        task.status = "failed";
+        task.error = subtype ?? "unknown error";
+      }
+    }
+
+    const evt: TaskEvent = { type: type ?? "unknown", timestamp: new Date().toISOString() };
+    task.events.push(evt);
+    onEvent?.({ type: "task_event", taskId: task.id, event: evt });
+  }
+
+  /** Extract text output from Claude CLI raw JSONL stdout. */
+  private extractClaudeOutput(stdout: string): string {
+    const lines = stdout.split("\n").filter(Boolean);
+    for (const line of lines.reverse()) {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.type === "result" && msg.result) return msg.result;
+      } catch { /* skip */ }
+    }
+    return stdout.slice(-2000);
+  }
+
+  /** Run task using Codex CLI (exec mode with JSON output). */
+  private runCodex(task: Task, cwd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const fullPrompt = this.buildTaskPrompt(task);
+
+      const args = [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--json",
+        "--cd", cwd,
+        "-m", this.model.startsWith("claude") ? "o4-mini" : this.model,
+        fullPrompt,
+      ];
+
+      const child = spawn("codex", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      const entry = this._runningTasks.get(task.id);
+      if (entry) entry.process = child;
+
+      let stdout = "";
+      let stderr = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      if (task.timeout > 0) {
+        timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          task.status = "timeout";
+          task.error = `timeout: task exceeded ${task.timeout}s`;
+        }, task.timeout * 1000);
+      }
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stdout += text;
+
+        for (const line of text.split("\n").filter(Boolean)) {
+          try {
+            const msg = JSON.parse(line);
+            this.handleCodexEvent(msg, task, startMs, onEvent);
+          } catch {
+            // raw output
+          }
+        }
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      child.on("close", (code) => {
+        if (timer) clearTimeout(timer);
+        task.durationMs = Date.now() - startMs;
+
+        if ((task.status as string) === "timeout") {
+          resolve();
+          return;
+        }
+
+        if (code === 0 && task.status === "running") {
+          task.status = "success";
+          if (!task.output) {
+            task.output = this.extractCodexOutput(stdout);
+          }
+          task.summary = task.output.slice(-500);
+        } else if (task.status === "running") {
+          task.status = "failed";
+          task.error = stderr || `codex exited with code ${code}`;
+        }
+        resolve();
+      });
+
+      child.on("error", (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  /** Parse Codex CLI JSONL event. */
+  private handleCodexEvent(msg: Record<string, unknown>, task: Task, startMs: number, onEvent?: EventCallback): void {
+    const type = msg.type as string | undefined;
+
+    if (type === "item.completed") {
+      const item = msg.item as { type?: string; content?: Array<{ text?: string }> } | undefined;
+      if (item?.type === "agent_message" && item.content) {
+        const text = item.content.map((c) => c.text ?? "").join("");
+        if (text) {
+          onEvent?.({ type: "task_log", taskId: task.id, text });
+        }
+      }
+    }
+
+    if (type === "turn.completed") {
+      const usage = msg.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      if (usage) {
+        task.tokenInput += usage.input_tokens ?? 0;
+        task.tokenOutput += usage.output_tokens ?? 0;
+        // Codex doesn't report cost — estimate from OpenAI pricing
+        task.costUsd = (task.tokenInput * 1.1 / 1_000_000) + (task.tokenOutput * 4.4 / 1_000_000);
+        const entry = this._runningTasks.get(task.id);
+        if (entry) entry.costUsd = task.costUsd;
+      }
+    }
+
+    task.events.push({ type: type ?? "unknown", timestamp: new Date().toISOString() });
+    onEvent?.({ type: "task_event", taskId: task.id, event: { type: type ?? "unknown" } });
+  }
+
+  /** Extract output from Codex CLI raw JSONL. */
+  private extractCodexOutput(stdout: string): string {
+    const outputs: string[] = [];
+    for (const line of stdout.split("\n").filter(Boolean)) {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.type === "item.completed" && msg.item?.type === "agent_message") {
+          const text = (msg.item.content ?? []).map((c: { text?: string }) => c.text ?? "").join("");
+          if (text) outputs.push(text);
+        }
+      } catch { /* skip */ }
+    }
+    return outputs.join("\n") || stdout.slice(-2000);
+  }
+
+  /** Run task using any generic CLI command. The prompt is appended as the last argument. */
+  private runGeneric(task: Task, cwd: string, agentCmd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const fullPrompt = this.buildTaskPrompt(task);
+
+      // Split the agent command on whitespace: e.g. "aider --yes" → ["aider", "--yes"]
+      const parts = agentCmd.split(/\s+/).filter(Boolean);
+      const cmd = parts[0];
+      const args = [...parts.slice(1), fullPrompt];
+
+      const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      const entry = this._runningTasks.get(task.id);
+      if (entry) entry.process = child;
+
+      let stdout = "";
+      let stderr = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      if (task.timeout > 0) {
+        timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          task.status = "timeout";
+          task.error = `timeout: task exceeded ${task.timeout}s`;
+        }, task.timeout * 1000);
+      }
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+        onEvent?.({ type: "task_progress", taskId: task.id, elapsedMs: Date.now() - startMs });
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      child.on("close", (code) => {
+        if (timer) clearTimeout(timer);
+        task.durationMs = Date.now() - startMs;
+
+        if ((task.status as string) === "timeout") {
+          resolve();
+          return;
+        }
+
+        if (code === 0 && task.status === "running") {
+          task.status = "success";
+          task.output = stdout.slice(-5000);
+          task.summary = task.output.slice(-500);
+        } else if (task.status === "running") {
+          task.status = "failed";
+          task.error = stderr || `${cmd} exited with code ${code}`;
+          task.output = stdout.slice(-5000);
+        }
+        resolve();
+      });
+
+      child.on("error", (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  /** Build the full task prompt with instructions appended. */
+  private buildTaskPrompt(task: Task): string {
+    return `${task.prompt}
+
+---
+
+## Instructions
+
+- **Minimal changes**: Only modify what is necessary to complete the task. Do not refactor, reformat, or touch unrelated code.
+- **TypeScript imports**: Always use \`.js\` extensions in import paths (e.g. \`import { foo } from "./bar.js"\`).
+- **Type checking**: After making changes, run \`npx tsc\` to catch type errors.
+- **Fix before committing**: If \`npx tsc\` fails, fix all errors before proceeding to commit.
+- **Commit when done**: Stage and commit all changes with \`git add -A && git commit -m "feat: <brief summary>"\`.`;
   }
 
   private verifyBuild(cwd: string): { ok: boolean; errors: string } {
@@ -309,5 +539,15 @@ export class AgentRunner {
       const errors = ((e.stdout ?? "") + (e.stderr ?? "")).trim() || (e.message ?? "unknown tsc error");
       return { ok: false, errors };
     }
+  }
+
+  /** Kill a running task's process. */
+  abort(taskId: string): boolean {
+    const entry = this._runningTasks.get(taskId);
+    if (entry?.process) {
+      entry.process.kill("SIGTERM");
+      return true;
+    }
+    return false;
   }
 }

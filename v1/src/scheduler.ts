@@ -67,7 +67,7 @@ export class Scheduler {
     }
   }
 
-  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string; webhookUrl?: string; tags?: string[] }): Task {
+  submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string; webhookUrl?: string; tags?: string[]; agent?: string }): Task {
     if (prompt.length > 2000) {
       log("warn", "prompt exceeds context budget, truncating", { originalLength: prompt.length });
       prompt = prompt.slice(0, 2000);
@@ -209,7 +209,7 @@ export class Scheduler {
       analysis: {
         failureRate: overall.total > 0 ? (failedCount + timeoutCount) / overall.total : 0,
         avgCostPerTask: overall.total > 0 ? overall.totalCost / overall.total : 0,
-        peakDay: daily.length > 0 ? daily.reduce((a, b) => (a.count >= b.count ? a : b)).date : null,
+        peakDay: daily.length > 0 ? daily.reduce((a, b) => (a.total >= b.total ? a : b)).date : null,
       },
     };
   }

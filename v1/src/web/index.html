@@ -477,7 +477,7 @@
 <table>
   <thead>
     <tr>
-      <th>ID</th><th>Prompt</th><th>Status</th><th>Worker</th>
+      <th>ID</th><th>Prompt</th><th>Status</th><th>Agent</th><th>Worker</th>
       <th>Cost</th><th>Duration</th><th>Actions</th>
     </tr>
   </thead>
@@ -533,11 +533,14 @@ let searchResults = [];
 
 async function refresh() {
   try {
-    const [stats, tasks, workers] = await Promise.all([
+    const results = await Promise.allSettled([
       fetch('/api/stats').then(r => r.json()),
       fetch('/api/tasks').then(r => r.json()),
       fetch('/api/workers').then(r => r.json()),
     ]);
+    const stats   = results[0].status === 'fulfilled' ? results[0].value : (lastData.stats   ?? {});
+    const tasks   = results[1].status === 'fulfilled' ? results[1].value : (lastData.tasks   ?? []);
+    const workers = results[2].status === 'fulfilled' ? results[2].value : (lastData.workers ?? []);
     lastData = { stats, tasks, workers };
     render(stats, tasks, workers);
   } catch(e) { console.error('refresh failed:', e); }
@@ -622,7 +625,7 @@ function renderTaskTable(tasks) {
   const sorted = [...tasks].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const tEl = document.getElementById('tasks');
   if (sorted.length === 0) {
-    tEl.innerHTML = '<tr class="empty-row"><td colspan="7">No tasks yet. Submit a prompt above to get started.</td></tr>';
+    tEl.innerHTML = '<tr class="empty-row"><td colspan="8">No tasks yet. Submit a prompt above to get started.</td></tr>';
     return;
   }
 
@@ -645,19 +648,21 @@ function renderTaskTable(tasks) {
   }
 
   tEl.innerHTML = sorted.map(t => {
-    const actions = [`<button class="btn-view" onclick="viewTask('${t.id}')">View</button>`];
+    const safeId = esc(t.id);
+    const actions = [`<button class="btn-view" onclick="viewTask('${safeId}')">View</button>`];
     if (t.status === 'pending') {
-      actions.push(`<button class="btn-cancel" onclick="cancelTask('${t.id}')">Cancel</button>`);
+      actions.push(`<button class="btn-cancel" onclick="cancelTask('${safeId}')">Cancel</button>`);
     }
     // For running tasks show a live elapsed-time badge (tickTimers() updates it every second)
     const statusBadge = t.status === 'running'
       ? `<span class="status status-running" data-running-task="${t.id}">Running ${getElapsed(t.id)}s</span>`
       : `<span class="status status-${t.status}">${t.status}</span>`;
     return `<tr>
-      <td><code>${t.id}</code></td>
+      <td><code>${safeId}</code></td>
       <td class="prompt-cell" title="${esc(t.prompt)}">${esc(t.prompt.slice(0, 80))}</td>
       <td>${statusBadge}</td>
-      <td>${t.worktree ?? '-'}</td>
+      <td>${esc(t.agent ?? 'claude')}</td>
+      <td>${esc(t.worktree ?? '-')}</td>
       <td>$${(t.costUsd ?? 0).toFixed(3)}</td>
       <td>${t.durationMs ? (t.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
       <td>${actions.join('')}</td>
@@ -667,7 +672,8 @@ function renderTaskTable(tasks) {
 
 function esc(s) {
   return String(s ?? '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // ── Task actions ───────────────────────────────────────────────────────────
@@ -705,14 +711,15 @@ async function viewTask(id) {
 
   document.getElementById('modal-title').textContent = 'Task ' + task.id;
   document.getElementById('modal-meta').innerHTML = `
-    <div><span>Status:</span> <span class="status status-${task.status}">${task.status}</span></div>
-    <div><span>Worker:</span> ${task.worktree ?? '-'}</div>
+    <div><span>Status:</span> <span class="status status-${esc(task.status)}">${esc(task.status)}</span></div>
+    <div><span>Worker:</span> ${esc(task.worktree ?? '-')}</div>
     <div><span>Cost:</span> $${(task.costUsd ?? 0).toFixed(4)}</div>
     <div><span>Duration:</span> ${task.durationMs ? (task.durationMs/1000).toFixed(1)+'s' : '-'}</div>
     <div><span>Tokens In:</span> ${(task.tokenInput ?? 0).toLocaleString()}</div>
     <div><span>Tokens Out:</span> ${(task.tokenOutput ?? 0).toLocaleString()}</div>
-    <div><span>Created:</span> ${new Date(task.createdAt).toLocaleString()}</div>
-    <div><span>Completed:</span> ${task.completedAt ? new Date(task.completedAt).toLocaleString() : '-'}</div>
+    <div><span>Created:</span> ${esc(new Date(task.createdAt).toLocaleString())}</div>
+    <div><span>Completed:</span> ${task.completedAt ? esc(new Date(task.completedAt).toLocaleString()) : '-'}</div>
+    <div><span>Agent:</span> ${esc(task.agent ?? 'claude')}</div>
   `;
 
   document.getElementById('modal-prompt').textContent = task.prompt ?? '';

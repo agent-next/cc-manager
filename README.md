@@ -1,6 +1,6 @@
 # CC-Manager
 
-A multi-agent orchestrator that runs multiple Claude Code agents in parallel using git worktrees. Submit tasks via REST API, monitor progress in real-time via SSE, and let agents auto-commit and merge their work back to `main`.
+A multi-agent orchestrator that runs parallel coding agents in git worktrees. Supports Claude Code, Codex, and any terminal CLI agent. Submit tasks via REST API, monitor in real-time via SSE, and agents auto-commit and merge to `main`.
 
 ```
 ┌─────────────┐     POST /api/tasks     ┌─────────────────┐
@@ -10,13 +10,13 @@ A multi-agent orchestrator that runs multiple Claude Code agents in parallel usi
                                                  │
                                         ┌────────▼────────┐
                                         │    Scheduler    │
-                                        │  (FIFO queue)   │
+                                        │ (priority queue)│
                                         └────────┬────────┘
                           ┌─────────────┬────────┴────────┬─────────────┐
                    ┌──────▼──────┐ ┌────▼────────┐ ┌──────▼──────┐    ...
                    │  Worker 0   │ │  Worker 1   │ │  Worker 2   │
                    │ (worktree)  │ │ (worktree)  │ │ (worktree)  │
-                   │ Claude Code │ │ Claude Code │ │ Claude Code │
+                   │ Claude CLI  │ │  Codex CLI  │ │ Any Agent   │
                    └──────┬──────┘ └──────┬──────┘ └──────┬──────┘
                           └───────────────┴───────────────┘
                                           │ git merge → main
@@ -28,20 +28,26 @@ A multi-agent orchestrator that runs multiple Claude Code agents in parallel usi
 
 ## Features
 
-- **Parallel execution** — run up to N Claude Code agents simultaneously, each in an isolated git worktree
-- **REST API** — submit, list, cancel, and inspect tasks over HTTP
-- **Real-time streaming** — track task lifecycle events via Server-Sent Events (SSE)
-- **Auto-commit & merge** — agents commit their work and successful branches are merged back to `main` automatically
-- **SQLite persistence** — full task history with cost, token counts, duration, and event logs
-- **Web dashboard** — built-in browser UI at `http://localhost:8080`
-- **Per-task budgets** — configurable USD spend cap and timeout per task
-- **Conflict-safe** — merge conflicts are detected and skipped gracefully; the task is still marked successful
+- **Multi-agent support** — use Claude Code, OpenAI Codex, or any terminal CLI as workers
+- **Parallel execution** — run up to 20 agents simultaneously, each in an isolated git worktree
+- **REST API** — 20+ endpoints for task management, stats, search, and batch operations
+- **Real-time streaming** — track task lifecycle via Server-Sent Events (SSE)
+- **Auto-commit & merge** — agents commit work and successful branches merge back to `main`
+- **SQLite persistence** — full task history with cost, tokens, duration, events, and daily stats
+- **Web dashboard** — built-in dark/light theme UI with real-time updates
+- **Budget controls** — per-task and total spend limits in USD
+- **Priority queue** — urgent/high/normal/low task priorities with retry logic
+- **Self-evolution** — built-in round analysis, code review, and improvement tracking
+- **Structured logging** — JSON logs with debug/info/warn/error levels
 
 ## Prerequisites
 
 - **Node.js 20+**
 - **git**
-- **`ANTHROPIC_API_KEY`** environment variable set to a valid Anthropic API key
+- At least one agent CLI installed:
+  - **Claude Code** (`claude` CLI) — set `ANTHROPIC_API_KEY`
+  - **Codex** (`codex` CLI) — set `OPENAI_API_KEY`
+  - Or any CLI that accepts a prompt as argument
 
 ## Installation
 
@@ -49,139 +55,163 @@ A multi-agent orchestrator that runs multiple Claude Code agents in parallel usi
 npm install -g cc-manager
 ```
 
+Or run from source:
+
+```bash
+cd v1 && npm install && npx tsc
+node dist/index.js --repo /path/to/repo
+```
+
 ## Quick Start
 
 ```bash
-# 1. Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# 2. Start the server against your repo
+# Start with Claude (default)
 cc-manager --repo /path/to/your/repo
 
-# 3. Submit a task
+# Start with Codex
+cc-manager --repo /path/to/repo --agent codex
+
+# Start with a custom agent
+cc-manager --repo /path/to/repo --agent "aider --yes"
+
+# Submit a task
 curl -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Add input validation to the login form"}'
+
+# Submit a task to a specific agent
+curl -X POST http://localhost:8080/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Fix the auth bug", "agent": "codex"}'
 ```
 
 ## Configuration
 
-All flags can be passed to the `cc-manager` CLI (or `node dist/index.js` when running from source):
-
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--repo <path>` | *(required)* | Path to the git repository to operate on |
-| `--workers <n>` | `10` | Number of parallel Claude Code workers |
+| `--repo <path>` | *(required)* | Path to the git repository |
+| `--workers <n>` | `10` | Parallel workers (1-20) |
 | `--port <n>` | `8080` | HTTP server port |
 | `--timeout <s>` | `300` | Per-task timeout in seconds |
-| `--budget <usd>` | `5` | Max spend per task in USD (0 = unlimited) |
-| `--model <id>` | `claude-sonnet-4-6` | Claude model ID |
-| `--system-prompt <text>` | — | System prompt prepended to every agent session |
+| `--budget <usd>` | `5` | Max spend per task in USD |
+| `--model <id>` | `claude-sonnet-4-6` | Model ID for Claude agents |
+| `--agent <cmd>` | `claude` | Default agent CLI (`claude`, `codex`, or any command) |
+| `--system-prompt <text>` | — | System prompt for all agents |
+| `--system-prompt-file <path>` | — | Load system prompt from file (overrides `--system-prompt`) |
+| `--total-budget <usd>` | `0` | Total spend limit across all tasks (0 = unlimited) |
+| `--verbose` | — | Enable debug-level logging |
+| `--quiet` | — | Only show errors |
 
-**Example:**
-```bash
-cc-manager \
-  --repo ~/projects/my-app \
-  --workers 5 \
-  --port 3000 \
-  --timeout 600 \
-  --budget 2 \
-  --model claude-opus-4-5
-```
+## API
 
-## API Overview
+### Task Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/stats` | Queue depth, active workers, and cost breakdown by status |
-| `GET` | `/api/tasks` | List all tasks, most recent first |
-| `GET` | `/api/tasks/:id` | Full task detail including event log |
-| `POST` | `/api/tasks` | Submit a new task with a natural-language prompt |
+| `POST` | `/api/tasks` | Submit a task |
+| `POST` | `/api/tasks/batch` | Submit multiple tasks |
+| `GET` | `/api/tasks` | List tasks (`?status`, `?limit`, `?offset`, `?tag`) |
+| `GET` | `/api/tasks/search?q=keyword` | Search tasks by prompt/output |
+| `GET` | `/api/tasks/errors` | Recent failures |
+| `GET` | `/api/tasks/:id` | Full task detail with queue position |
+| `GET` | `/api/tasks/:id/diff` | Git diff for completed task |
+| `GET` | `/api/tasks/:id/output` | Raw task output |
+| `POST` | `/api/tasks/:id/retry` | Requeue a failed task |
 | `DELETE` | `/api/tasks/:id` | Cancel a pending task |
-| `GET` | `/api/workers` | Worker pool status (name, path, branch, busy, currentTask) |
-| `GET` | `/api/events` | Server-Sent Events stream for real-time task lifecycle events |
+| `DELETE` | `/api/tasks/cleanup?days=30` | Remove old completed tasks |
 
-**POST /api/tasks** body:
+### Monitoring
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/stats` | Queue depth, workers, cost breakdown |
+| `GET` | `/api/stats/daily` | Daily stats (total, success, cost) |
+| `GET` | `/api/workers` | Worker pool status |
+| `GET` | `/api/events` | SSE stream |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/budget` | Budget status and remaining spend |
+| `GET` | `/api/insights` | Historical performance metrics |
+
+### Self-Evolution
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/evolution/log` | Evolution analysis history |
+| `POST` | `/api/evolution/analyze` | Trigger round analysis |
+| `GET` | `/api/docs` | API documentation |
+
+### POST /api/tasks body
+
 ```json
 {
   "prompt": "Refactor the auth module to use JWT",
   "timeout": 300,
-  "maxBudget": 5
+  "maxBudget": 5,
+  "priority": "high",
+  "tags": ["auth", "refactor"],
+  "agent": "claude",
+  "webhookUrl": "https://example.com/hook"
 }
 ```
 
-SSE events emitted on `GET /api/events`:
+### SSE events on GET /api/events
 
-| Event type | When |
-|------------|------|
+| Event | When |
+|-------|------|
 | `task_queued` | Task accepted into queue |
 | `task_started` | Worker assigned, agent running |
-| `task_final` | Task completed (success / failed / timeout) |
+| `task_progress` | Agent output streaming |
+| `task_final` | Completed (success/failed/timeout) |
 
-## Dashboard
+## Multi-Agent Architecture
 
-Open **http://localhost:8080** in your browser after starting the server. The built-in web UI shows the live task queue, per-worker status, real-time event logs, and cost/token summaries — no extra setup required.
+CC-Manager spawns agents as child processes via CLI, parsing their output streams:
 
-## How It Works
+- **Claude Code** — `claude -p --output-format stream-json` with budget controls
+- **Codex** — `codex exec --json` with sandbox bypass for automation
+- **Generic** — any CLI command that accepts a prompt argument; output captured from stdout
 
-1. **Task submission** — clients POST a natural-language prompt to the API
-2. **Worker assignment** — the scheduler picks an idle worker and resets its worktree to `main`
-3. **Agent execution** — Claude Code runs inside the isolated worktree with `bypassPermissions`, up to 50 turns
-4. **Auto-commit** — each agent is instructed to `git add -A && git commit` before finishing
-5. **Auto-merge** — on success, the worker branch is merged back to `main`; on conflict, the merge is skipped
-6. **Persistence** — all task metadata (cost, tokens, duration, events) is saved to SQLite
+Each task can specify which agent to use via the `agent` field. The `--agent` flag sets the default.
+
+## Task Lifecycle
+
+```
+pending → running → success  (branch merged to main)
+                 → failed    (branch abandoned, may retry)
+                 → timeout   (process killed)
+       → cancelled           (removed before assignment)
+```
 
 ## Project Structure
 
 ```
 cc-manager/
-├── v1/                        # TypeScript application
+├── v1/
 │   ├── src/
 │   │   ├── index.ts           # CLI entry point (Commander.js)
-│   │   ├── scheduler.ts       # Task queue & worker orchestration
-│   │   ├── agent-runner.ts    # Claude Agent SDK integration
-│   │   ├── worktree-pool.ts   # Git worktree lifecycle management
-│   │   ├── server.ts          # Hono REST API + SSE server
+│   │   ├── scheduler.ts       # Priority queue, retry, budget enforcement
+│   │   ├── agent-runner.ts    # Multi-agent CLI spawning + code review
+│   │   ├── worktree-pool.ts   # Git worktree lifecycle
+│   │   ├── server.ts          # Hono REST API + SSE
 │   │   ├── store.ts           # SQLite persistence (better-sqlite3)
 │   │   ├── types.ts           # Shared TypeScript types
-│   │   └── web/index.html     # Web dashboard
+│   │   ├── logger.ts          # Structured JSON logger with levels
+│   │   ├── web/index.html     # Dashboard (dark/light theme)
+│   │   └── __tests__/         # BDD-style test suites (66 tests)
 │   ├── package.json
 │   └── tsconfig.json
-└── docs/
-    └── AGENT-FLYWHEEL-DESIGN.md   # V2 vision: autonomous agent swarms
+└── CLAUDE.md                  # Agent instructions & project spec
 ```
 
 ## Tech Stack
 
 | Component | Library |
 |-----------|---------|
-| Agent runtime | `@anthropic-ai/claude-agent-sdk` |
 | Web server | `hono` + `@hono/node-server` |
 | Database | `better-sqlite3` (WAL mode) |
 | CLI | `commander` |
 | Language | TypeScript 5 / Node.js ESM |
-
-## Task Lifecycle
-
-```
-pending → running → success  (branch merged to main)
-                 → failed    (branch abandoned)
-                 → timeout   (AbortController fired)
-       → cancelled           (removed before worker assigned)
-```
-
-Each completed task records: output, error, cost (USD), token counts (input/output), duration (ms), and a full event log.
-
-## Worktree Isolation
-
-On startup, CC-Manager creates `.worktrees/worker-{N}` directories — one per worker — each on its own `worker/worker-{N}` branch. Before each task:
-
-1. The worktree is hard-reset to `main`
-2. The agent runs with that worktree as its `cwd`
-3. On success, the branch is merged back to `main` with `git merge --no-edit`
-4. On merge conflict, the merge is aborted and the task is still marked successful
-
-The `.worktrees/` directory and `.cc-manager.db` are gitignored.
+| Agent integration | `child_process.spawn` (CLI-based) |
 
 ## License
 

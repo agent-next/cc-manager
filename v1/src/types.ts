@@ -1,5 +1,7 @@
 export type TaskStatus = "pending" | "running" | "success" | "failed" | "timeout" | "cancelled";
 export type TaskPriority = "urgent" | "high" | "normal" | "low";
+/** Built-in agent types with known output parsing. Any string is accepted for generic CLI agents. */
+export type AgentType = "claude" | "codex";
 
 export interface Task {
   id: string;
@@ -25,6 +27,7 @@ export interface Task {
   tags?: string[];
   webhookUrl?: string;
   summary?: string;
+  agent?: string;
 }
 
 export interface TaskEvent {
@@ -99,6 +102,7 @@ export interface TaskCreateInput {
   timeout?: number;
   maxBudget?: number;
   priority?: Task["priority"];
+  agent?: string;
 }
 
 export interface HarnessConfig {
@@ -155,7 +159,7 @@ export interface FlywheelState {
   lastAnalysis: EvolutionEntry | undefined;
 }
 
-export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl">>): Task {
+export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl" | "agent">>): Task {
   return {
     id: opts?.id ?? crypto.randomUUID().slice(0, 8),
     prompt,
@@ -176,5 +180,6 @@ export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "tim
     dependsOn: opts?.dependsOn,
     tags: opts?.tags,
     webhookUrl: opts?.webhookUrl,
+    agent: opts?.agent ?? "claude",
   };
 }

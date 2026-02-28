@@ -4,8 +4,9 @@ import { AgentRunner } from "../agent-runner.js";
 import { createTask } from "../types.js";
 
 describe("AgentRunner", () => {
+  // ── estimateCost ──
+
   it("estimateCost returns correct values for sonnet model", () => {
-    // 1 000 000 input tokens @ $3/MTok = $3, 1 000 000 output tokens @ $15/MTok = $15
     const cost = AgentRunner.estimateCost(1_000_000, 1_000_000, "claude-sonnet-4-6");
     assert.strictEqual(cost, 18);
   });
@@ -14,6 +15,17 @@ describe("AgentRunner", () => {
     const cost = AgentRunner.estimateCost(1_000_000, 1_000_000, "unknown-model-xyz");
     assert.strictEqual(cost, 18);
   });
+
+  it("estimateCost returns correct values for opus model", () => {
+    const cost = AgentRunner.estimateCost(1_000_000, 1_000_000, "claude-opus-4-5");
+    assert.strictEqual(cost, 90); // 15 + 75
+  });
+
+  it("estimateCost returns 0 for zero tokens", () => {
+    assert.strictEqual(AgentRunner.estimateCost(0, 0, "claude-sonnet-4-6"), 0);
+  });
+
+  // ── reviewDiff ──
 
   it("reviewDiff returns a ReviewResult with score, issues, and suggestions arrays", () => {
     const runner = new AgentRunner();
@@ -34,11 +46,83 @@ describe("AgentRunner", () => {
     assert.ok(withTests.score > withoutTests.score, "test-including diff should score higher");
   });
 
+  it("reviewDiff penalizes console.log in diff", () => {
+    const runner = new AgentRunner();
+    const result = runner.reviewDiff("diff --git a/foo.ts\n+console.log('debug');");
+    assert.ok(result.score < 50, "console.log should lower score below baseline");
+    assert.ok(result.issues.length > 0, "should flag console.log as an issue");
+  });
+
+  // ── buildSystemPrompt ──
+
   it("buildSystemPrompt includes tsc instruction", () => {
     const runner = new AgentRunner();
     const task = createTask("fix the bug");
-    // Pass a non-existent cwd so CLAUDE.md lookup fails silently
     const prompt = runner.buildSystemPrompt(task, "/nonexistent-path-xyz");
     assert.ok(prompt.includes("npx tsc"), "prompt should include npx tsc instruction");
+  });
+
+  it("buildSystemPrompt includes test runner hints for test-related tasks", () => {
+    const runner = new AgentRunner();
+    const task = createTask("add unit test for parser");
+    const prompt = runner.buildSystemPrompt(task, "/nonexistent-path-xyz");
+    assert.ok(prompt.includes("node:test"), "should mention node:test for test tasks");
+  });
+
+  it("buildSystemPrompt includes dashboard hints for html-related tasks", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix dashboard layout issue");
+    const prompt = runner.buildSystemPrompt(task, "/nonexistent-path-xyz");
+    assert.ok(prompt.includes("vanilla"), "should mention vanilla JS for dashboard tasks");
+  });
+
+  it("buildSystemPrompt detects file mentions and restricts scope", () => {
+    const runner = new AgentRunner();
+    const task = createTask("refactor store.ts to improve error handling");
+    const prompt = runner.buildSystemPrompt(task, "/nonexistent-path-xyz");
+    assert.ok(prompt.includes("store.ts"), "should mention the specific file");
+    assert.ok(prompt.includes("Only modify"), "should restrict to single file");
+  });
+
+  // ── Constructor defaults ──
+
+  it("constructor uses sensible defaults", () => {
+    const runner = new AgentRunner();
+    // Should not throw when accessing public methods
+    assert.deepStrictEqual(runner.getRunningTasks(), []);
+  });
+
+  it("constructor accepts custom parameters", () => {
+    const runner = new AgentRunner("claude-opus-4-5", "be concise", "codex");
+    assert.deepStrictEqual(runner.getRunningTasks(), []);
+  });
+
+  // ── getRunningTasks / abort ──
+
+  it("getRunningTasks returns empty array when no tasks running", () => {
+    const runner = new AgentRunner();
+    assert.deepStrictEqual(runner.getRunningTasks(), []);
+  });
+
+  it("abort returns false for non-existent task", () => {
+    const runner = new AgentRunner();
+    assert.strictEqual(runner.abort("nonexistent-id"), false);
+  });
+
+  // ── createTask with agent field ──
+
+  it("createTask defaults agent to 'claude'", () => {
+    const task = createTask("do something");
+    assert.strictEqual(task.agent, "claude");
+  });
+
+  it("createTask accepts custom agent", () => {
+    const task = createTask("do something", { agent: "codex" });
+    assert.strictEqual(task.agent, "codex");
+  });
+
+  it("createTask accepts generic agent command", () => {
+    const task = createTask("do something", { agent: "aider --yes" });
+    assert.strictEqual(task.agent, "aider --yes");
   });
 });

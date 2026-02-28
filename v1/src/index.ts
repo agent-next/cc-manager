@@ -6,6 +6,7 @@ import { AgentRunner } from "./agent-runner.js";
 import { Store } from "./store.js";
 import { Scheduler } from "./scheduler.js";
 import { WebServer } from "./server.js";
+import { setLogLevel } from "./logger.js";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -22,9 +23,16 @@ const program = new Command()
   .option("--system-prompt <text>", "System prompt for all agents", "")
   .option("--system-prompt-file <path>", "Path to a file containing the system prompt (takes precedence over --system-prompt)")
   .option("--total-budget <usd>", "Total spend limit in USD across all tasks (0 = unlimited)", "0")
+  .option("--agent <cmd>", "Default agent CLI (claude, codex, or any CLI command)", "claude")
+  .option("--verbose", "Enable debug-level logging")
+  .option("--quiet", "Only show errors")
   .parse();
 
 const opts = program.opts();
+
+// Configure log level
+if (opts.verbose) setLogLevel("debug");
+else if (opts.quiet) setLogLevel("error");
 
 // Resolve system prompt: file takes precedence over inline text
 let systemPrompt: string = opts.systemPrompt ?? "";
@@ -67,7 +75,7 @@ async function main() {
   const pool = new WorktreePool(opts.repo, parseInt(opts.workers));
   await pool.init();
 
-  const runner = new AgentRunner(opts.model, systemPrompt);
+  const runner = new AgentRunner(opts.model, systemPrompt, opts.agent);
   const store = new Store(opts.repo);
 
   const server = new WebServer(pool, parseInt(opts.port));
@@ -95,6 +103,7 @@ async function main() {
   console.log(`  ${"Workers".padEnd(col)}${workers}`);
   console.log(`  ${"Port".padEnd(col)}${port}`);
   console.log(`  ${"Model".padEnd(col)}${opts.model}`);
+  console.log(`  ${"Agent".padEnd(col)}${opts.agent}`);
   console.log(`  ${"Dashboard URL".padEnd(col)}${dashboardUrl}`);
   console.log("");
 

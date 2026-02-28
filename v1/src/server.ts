@@ -263,7 +263,7 @@ export class WebServer {
 
     // API: batch submit tasks
     app.post("/api/tasks/batch", async (c) => {
-      let body: { prompts?: unknown; timeout?: unknown; maxBudget?: unknown };
+      let body: { prompts?: unknown; timeout?: unknown; maxBudget?: unknown; agent?: unknown };
       try {
         body = await c.req.json();
       } catch {
@@ -293,6 +293,7 @@ export class WebServer {
         const task = this._scheduler.submit(prompt, {
           timeout: body.timeout as number | undefined,
           maxBudget: body.maxBudget as number | undefined,
+          agent: body.agent as string | undefined,
         });
         return { id: task.id, status: task.status };
       });
@@ -314,14 +315,14 @@ export class WebServer {
         );
       }
 
-      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown; tags?: unknown; webhookUrl?: unknown };
+      let body: { prompt?: unknown; timeout?: unknown; maxBudget?: unknown; priority?: unknown; tags?: unknown; webhookUrl?: unknown; agent?: unknown };
       try {
         body = await c.req.json();
       } catch {
         return c.json({ error: "bad json" }, 400);
       }
-      if (typeof body.prompt !== "string" || body.prompt.trim() === "" || body.prompt.length > 5000) {
-        return c.json({ error: "prompt is required and must be under 5000 chars" }, 400);
+      if (typeof body.prompt !== "string" || body.prompt.trim() === "" || body.prompt.length > 2000) {
+        return c.json({ error: "prompt is required and must be under 2000 chars" }, 400);
       }
       if (body.timeout !== undefined && (typeof body.timeout !== "number" || body.timeout < 1 || body.timeout > 3600)) {
         return c.json({ error: "timeout must be a number between 1 and 3600" }, 400);
@@ -351,12 +352,16 @@ export class WebServer {
           }
         }
       }
+      if (body.agent !== undefined && typeof body.agent !== "string") {
+        return c.json({ error: "agent must be a string" }, 400);
+      }
       const task = this._scheduler.submit(body.prompt, {
         timeout: body.timeout as number | undefined,
         maxBudget: body.maxBudget as number | undefined,
         priority: body.priority as "urgent" | "high" | "normal" | "low" | undefined,
         tags: body.tags as string[] | undefined,
         webhookUrl: body.webhookUrl as string | undefined,
+        agent: body.agent as string | undefined,
       });
       return c.json({ id: task.id, status: task.status }, 201);
     });
