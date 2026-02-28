@@ -73,11 +73,16 @@ export class WebServer {
 
     // Request logging middleware
     app.use(async (c, next) => {
+      const start = Date.now();
       await next();
+      const reqPath = c.req.path;
+      // Skip SSE endpoint and static file requests
+      if (reqPath === "/api/events" || /\.\w+$/.test(reqPath)) return;
       log("info", "request", {
         method: c.req.method,
-        path: c.req.path,
+        path: reqPath,
         status: c.res.status,
+        durationMs: Date.now() - start,
       });
     });
 
