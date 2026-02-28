@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Only run checks when v1/ files are staged
+if ! git diff --cached --name-only | grep -q '^v1/'; then
+  exit 0
+fi
+
+echo "pre-commit: type checking..."
+cd v1 && npx tsc --noEmit
+
+echo "pre-commit: running tests..."
+node --import tsx --test src/__tests__/*.test.ts
+
+echo "pre-commit: all checks passed"

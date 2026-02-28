@@ -8,20 +8,20 @@ Thank you for your interest in contributing! This document covers everything you
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/cc-manager.git
+git clone https://github.com/agent-next/cc-manager.git
 cd cc-manager
 
 # 2. Move into the main application directory
 cd v1
 
-# 3. Install dependencies
+# 3. Install dependencies (also sets up pre-commit hooks)
 npm install
 
 # 4. Start the development server
 npm run dev
 ```
 
-> **Note:** Node.js 18+ is required. The dev server watches for file changes and recompiles automatically.
+> **Note:** Node.js 20+ is required. The `npm install` step also configures git pre-commit hooks via the `prepare` script.
 
 ---
 
@@ -33,7 +33,7 @@ cc-manager/
 │   ├── src/
 │   │   ├── index.ts           # CLI entry point — parses options and wires up core components
 │   │   ├── scheduler.ts       # Task queue and worker orchestration (FIFO, priority levels)
-│   │   ├── agent-runner.ts    # Claude Agent SDK integration — runs agents, tracks cost/tokens
+│   │   ├── agent-runner.ts    # Multi-agent spawning (SDK + CLI), cost tracking, code review
 │   │   ├── worktree-pool.ts   # Git worktree lifecycle — creates, resets, and merges worktrees
 │   │   ├── server.ts          # Hono REST API + Server-Sent Events endpoint
 │   │   ├── store.ts           # SQLite persistence via better-sqlite3 (WAL mode)
@@ -43,10 +43,12 @@ cc-manager/
 │   │       └── index.html     # Web dashboard — real-time task monitoring UI (no frameworks)
 │   ├── tsconfig.json          # TypeScript compiler configuration
 │   └── package.json           # Dependencies and npm scripts
-├── tests/                     # Integration and end-to-end tests (Python/Bash)
-├── docs/                      # Design documents and planning notes
+├── .githooks/                 # Git hooks (pre-commit: tsc + tests)
+├── .github/workflows/         # CI/CD (GitHub Actions)
+├── docs/                      # Design documents, API reference, planning notes
 ├── README.md                  # Quick-start guide and API reference
 ├── CLAUDE.md                  # Development rules injected into agent system prompts
+├── CHANGELOG.md               # Release notes
 └── CONTRIBUTING.md            # This file
 ```
 
@@ -55,21 +57,17 @@ cc-manager/
 ## Running Tests
 
 ```bash
-# Unit tests (from the v1/ directory)
+# From the v1/ directory
+cd v1
+
+# Run all tests (71 BDD-style tests across 5 suites)
 npm test
 
-# Integration / end-to-end tests (from the repo root)
-bash tests/run_tests.sh
+# Type-check only
+npx tsc --noEmit
 ```
 
-TypeScript type-checking can be run separately:
-
-```bash
-cd v1
-npx tsc
-```
-
-All type errors must be resolved before submitting a pull request.
+Pre-commit hooks run both `tsc` and `npm test` automatically. All type errors and test failures must be resolved before committing.
 
 ---
 

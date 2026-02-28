@@ -169,6 +169,7 @@ Submit a single task for execution.
 | `maxBudget` | `number` | ❌ | USD cap per task, 0–100 |
 | `tags` | `string[]` | ❌ | Max 10 items, each max 50 characters |
 | `webhookUrl` | `string` | ❌ | Must start with `http` |
+| `agent` | `string` | ❌ | `claude-sdk` \| `claude` \| `codex` \| any CLI command (default: server default) |
 
 **Response** `201 Created`
 

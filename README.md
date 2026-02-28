@@ -1,6 +1,9 @@
 # CC-Manager
 
-A multi-agent orchestrator that runs parallel coding agents in git worktrees. Supports Claude Code, Codex, and any terminal CLI agent. Submit tasks via REST API, monitor in real-time via SSE, and agents auto-commit and merge to `main`.
+[![CI](https://github.com/agent-next/cc-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-next/cc-manager/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+A multi-agent orchestrator that runs parallel coding agents in git worktrees. Supports Claude Agent SDK, Claude CLI, Codex CLI, and any terminal agent. Submit tasks via REST API, monitor in real-time via SSE, and agents auto-commit and merge to `main`.
 
 ```
 ┌─────────────┐     POST /api/tasks     ┌─────────────────┐
@@ -165,10 +168,11 @@ curl -X POST http://localhost:8080/api/tasks \
 
 ## Multi-Agent Architecture
 
-CC-Manager spawns agents as child processes via CLI, parsing their output streams:
+CC-Manager supports four agent dispatch modes:
 
-- **Claude Code** — `claude -p --output-format stream-json` with budget controls
-- **Codex** — `codex exec --json` with sandbox bypass for automation
+- **Claude Agent SDK** (`claude-sdk`) — programmatic control via `@anthropic-ai/claude-agent-sdk`, with structured events, AbortController support, and token-level cost tracking
+- **Claude CLI** (`claude`) — `claude -p --output-format stream-json` with budget controls
+- **Codex CLI** (`codex`) — `codex exec --json` with sandbox bypass for automation
 - **Generic** — any CLI command that accepts a prompt argument; output captured from stdout
 
 Each task can specify which agent to use via the `agent` field. The `--agent` flag sets the default.
@@ -197,7 +201,7 @@ cc-manager/
 │   │   ├── types.ts           # Shared TypeScript types
 │   │   ├── logger.ts          # Structured JSON logger with levels
 │   │   ├── web/index.html     # Dashboard (dark/light theme)
-│   │   └── __tests__/         # BDD-style test suites (66 tests)
+│   │   └── __tests__/         # BDD-style test suites (71 tests)
 │   ├── package.json
 │   └── tsconfig.json
 └── CLAUDE.md                  # Agent instructions & project spec
@@ -211,7 +215,7 @@ cc-manager/
 | Database | `better-sqlite3` (WAL mode) |
 | CLI | `commander` |
 | Language | TypeScript 5 / Node.js ESM |
-| Agent integration | `child_process.spawn` (CLI-based) |
+| Agent integration | `@anthropic-ai/claude-agent-sdk` + `child_process.spawn` |
 
 ## License
 
