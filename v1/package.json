@@ -1,7 +1,25 @@
 {
   "name": "cc-manager",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha",
+  "description": "Multi-agent orchestrator for Claude Code",
   "type": "module",
+  "bin": {
+    "cc-manager": "dist/index.js"
+  },
+  "keywords": [
+    "claude",
+    "agent",
+    "orchestrator",
+    "worktree"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/cc-manager"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
