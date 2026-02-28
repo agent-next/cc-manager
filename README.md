@@ -33,6 +33,16 @@ A multi-agent orchestrator that runs parallel coding agents in git worktrees. Su
                                    └─────────────┘
 ```
 
+## Documentation
+
+- GitHub Pages: <https://agent-next.github.io/cc-manager/>
+- Docs home (in repo): [docs/index.html](docs/index.html)
+- Getting started: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+- Operations guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Configuration reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- API reference: [docs/API.md](docs/API.md)
+- Flywheel design: [docs/AGENT-FLYWHEEL-DESIGN.md](docs/AGENT-FLYWHEEL-DESIGN.md)
+
 ## Features
 
 - **Multi-agent support** — use Claude Code, OpenAI Codex, or any terminal CLI as workers
