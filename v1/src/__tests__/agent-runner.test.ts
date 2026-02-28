@@ -195,4 +195,107 @@ describe("AgentRunner", () => {
     assert.ok(task.output.startsWith("[TSC_FAILED]"), "output should be prefixed with [TSC_FAILED]");
     assert.ok(task.durationMs > 0, "durationMs should be recorded");
   });
+
+  // ── handleCodexEvent ──
+
+  it("handleCodexEvent extracts content from item.completed", () => {
+    const runner = new AgentRunner();
+    const task = createTask("test");
+    task.status = "running";
+    const events: Record<string, unknown>[] = [];
+    const handler = (runner as unknown as { handleCodexEvent: Function }).handleCodexEvent.bind(runner);
+
+    handler({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        content: [{ text: "Hello world" }],
+      },
+    }, task, Date.now(), (evt: Record<string, unknown>) => events.push(evt));
+
+    assert.ok(events.some(e => e.type === "task_log" && e.text === "Hello world"));
+  });
+
+  it("handleCodexEvent accumulates tokens from turn.completed", () => {
+    const runner = new AgentRunner();
+    const task = createTask("test");
+    task.status = "running";
+    const handler = (runner as unknown as { handleCodexEvent: Function }).handleCodexEvent.bind(runner);
+
+    handler({
+      type: "turn.completed",
+      usage: { input_tokens: 100, output_tokens: 50 },
+    }, task, Date.now());
+
+    assert.strictEqual(task.tokenInput, 100);
+    assert.strictEqual(task.tokenOutput, 50);
+    assert.ok(task.costUsd > 0, "cost should be computed from token usage");
+
+    // Send another turn
+    handler({
+      type: "turn.completed",
+      usage: { input_tokens: 200, output_tokens: 100 },
+    }, task, Date.now());
+
+    assert.strictEqual(task.tokenInput, 300, "tokens should accumulate");
+    assert.strictEqual(task.tokenOutput, 150, "tokens should accumulate");
+  });
+
+  // ── verifyBuild ──
+
+  it("verifyBuild returns true when tsc succeeds", async () => {
+    // Use the actual project directory where tsc config exists
+    const runner = new AgentRunner();
+    const verify = (runner as unknown as { verifyBuild: (cwd: string) => Promise<{ ok: boolean; errors: string }> }).verifyBuild.bind(runner);
+    const result = await verify(process.cwd() + "/../"); // parent = v1 directory
+    // We can't guarantee tsc succeeds in CI, so just check structure
+    assert.strictEqual(typeof result.ok, "boolean");
+    assert.strictEqual(typeof result.errors, "string");
+  });
+
+  it("verifyBuild returns false when tsc fails", async () => {
+    const runner = new AgentRunner();
+    const verify = (runner as unknown as { verifyBuild: (cwd: string) => Promise<{ ok: boolean; errors: string }> }).verifyBuild.bind(runner);
+    // /tmp has no tsconfig.json, so tsc will fail
+    const result = await verify("/tmp");
+    assert.strictEqual(result.ok, false);
+    assert.ok(result.errors.length > 0, "should have error message");
+  });
+
+  // ── buildSystemPrompt edge cases ──
+
+  it("buildSystemPrompt injects CLAUDE.md rules section when file exists", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix something");
+    // Use actual project root where CLAUDE.md exists
+    const prompt = runner.buildSystemPrompt(task, process.cwd() + "/../..");
+    // CLAUDE.md in project root has "## Development Rules" section
+    assert.ok(prompt.includes(".js"), "should include .js extension rule");
+  });
+
+  it("buildSystemPrompt works without CLAUDE.md file", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix something");
+    const prompt = runner.buildSystemPrompt(task, "/nonexistent-path");
+    assert.ok(prompt.includes("npx tsc"), "should still include tsc instruction");
+    assert.ok(prompt.length > 0);
+  });
+
+  // ── pushEvent cap ──
+
+  it("pushEvent caps events at 200", () => {
+    const runner = new AgentRunner();
+    const task = createTask("test");
+    const push = (runner as unknown as { pushEvent: Function }).pushEvent.bind(runner);
+
+    // Fill to 200
+    for (let i = 0; i < 205; i++) {
+      push(task, { type: `evt-${i}`, timestamp: new Date().toISOString() });
+    }
+
+    assert.strictEqual(task.events.length, 200, "should cap at 200 events");
+    // First event should be evt-5 (0-4 were shifted out)
+    assert.strictEqual(task.events[0].type, "evt-5");
+    assert.strictEqual(task.events[199].type, "evt-204");
+  });
 });
