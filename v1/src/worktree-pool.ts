@@ -29,12 +29,13 @@ export class WorktreePool {
   }
 
   async init(): Promise<void> {
+    const initStart = Date.now();
     const wtDir = path.join(this.repoPath, ".worktrees");
     mkdirSync(wtDir, { recursive: true });
 
     await this.git("checkout", "main").catch(() => {});
 
-    for (let i = 0; i < this.poolSize; i++) {
+    const worktreePromises = Array.from({ length: this.poolSize }, async (_, i) => {
       const name = `worker-${i}`;
       const workerPath = path.join(wtDir, name);
       const branch = `worker/${name}`;
@@ -51,9 +52,17 @@ export class WorktreePool {
 
       this.workers.set(name, { name, path: workerPath, branch, busy: false });
       this.workerMeta.set(name, { taskCount: 0 });
-    }
+    });
 
-    log("info", "[pool] worktrees ready", { count: this.workers.size });
+    const results = await Promise.allSettled(worktreePromises);
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        log("error", "[pool] failed to init worker", { worker: `worker-${i}`, err: String(result.reason) });
+      }
+    });
+
+    const initMs = Date.now() - initStart;
+    log("info", "[pool] worktrees ready", { count: this.workers.size, initMs });
   }
 
   async acquire(): Promise<WorkerInfo | null> {
