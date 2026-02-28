@@ -51,8 +51,25 @@ export class Scheduler {
     log("info", "scheduler stopped");
   }
 
+  private validateTask(task: Task): void {
+    if (typeof task.prompt !== "string" || task.prompt.trim() === "") {
+      throw new Error("Task prompt must be a non-empty string");
+    }
+    if (typeof task.timeout !== "number" || task.timeout <= 0) {
+      throw new Error("Task timeout must be a positive number");
+    }
+    if (typeof task.maxBudget !== "number" || task.maxBudget < 0) {
+      throw new Error("Task maxBudget must be a non-negative number");
+    }
+    const validPriorities: import("./types.js").TaskPriority[] = ["urgent", "high", "normal", "low"];
+    if (!validPriorities.includes(task.priority)) {
+      throw new Error(`Task priority must be one of: urgent, high, normal, low`);
+    }
+  }
+
   submit(prompt: string, opts?: { id?: string; timeout?: number; maxBudget?: number; priority?: import("./types.js").TaskPriority; dependsOn?: string; webhookUrl?: string; tags?: string[] }): Task {
     const task = createTask(prompt, opts);
+    this.validateTask(task);
     this.tasks.set(task.id, task);
     this.queue.push(task);
     this.store.save(task);
