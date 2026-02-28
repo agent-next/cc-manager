@@ -101,6 +101,31 @@ export interface TaskCreateInput {
   priority?: Task["priority"];
 }
 
+export interface HarnessConfig {
+  maxPromptLength: number;
+  maxTokenBudget: number;
+  enableAutoReview: boolean;
+  enableErrorInjection: boolean;
+  systemPromptSource: string;
+}
+
+export const defaultHarnessConfig: HarnessConfig = {
+  maxPromptLength: 2000,
+  maxTokenBudget: 100000,
+  enableAutoReview: false,
+  enableErrorInjection: true,
+  systemPromptSource: 'claude.md',
+};
+
+export interface RoundSummary {
+  roundNumber: number;
+  taskIds: string[];
+  successRate: number;
+  totalCost: number;
+  totalDuration: number;
+  patternsDetected: string[];
+}
+
 export function createTask(prompt: string, opts?: Partial<Pick<Task, "id" | "timeout" | "maxBudget" | "maxRetries" | "priority" | "dependsOn" | "tags" | "webhookUrl">>): Task {
   return {
     id: opts?.id ?? crypto.randomUUID().slice(0, 8),
