@@ -1,6 +1,7 @@
 import type { Task, TaskEvent } from "./types.js";
 import { log } from "./logger.js";
 import { execSync } from "child_process";
+import { readFileSync } from "node:fs";
 
 type EventCallback = (event: Record<string, unknown>) => void;
 
@@ -44,8 +45,20 @@ export class AgentRunner {
     }));
   }
 
-  buildSystemPrompt(task: Task): string {
+  buildSystemPrompt(task: Task, cwd: string = process.cwd()): string {
     const parts: string[] = [];
+
+    // Inject Development Rules from CLAUDE.md if present
+    try {
+      const claudeMd = readFileSync(`${cwd}/CLAUDE.md`, "utf8");
+      const match = claudeMd.match(/## Development Rules\n([\s\S]*?)(?=\n## |$)/);
+      if (match) {
+        parts.push(match[1].trim());
+      }
+    } catch {
+      // CLAUDE.md not found – skip gracefully
+    }
+
     const lower = task.prompt.toLowerCase();
 
     // Always-included instructions
