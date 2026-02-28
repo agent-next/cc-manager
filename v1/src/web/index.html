@@ -113,6 +113,25 @@
   .cost-item .ci-label { font-size: 0.72em; color: var(--text-muted); text-transform: uppercase; }
   .cost-item .ci-value { font-size: 1.05em; font-weight: 600; color: var(--accent); }
 
+  /* ── Worker status bar (horizontal flex cards below cost bar) ── */
+  .worker-status-bar {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 22px;
+  }
+  .worker-status-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 8px;
+    min-width: 0;
+  }
+  .worker-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .worker-status-dot.idle { background: var(--success); }
+  .worker-status-dot.busy { background: var(--accent); animation: pulse 2s infinite; }
+  .worker-status-name { font-size: 0.88em; font-weight: 600; color: var(--text); }
+  .worker-status-task { font-size: 0.78em; color: var(--text-muted); }
+
   /* ── Workers (legacy chips – kept for compat) ── */
   .workers { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
   .worker {
@@ -316,6 +335,9 @@
   </div>
 </div>
 
+<!-- Worker Status Cards -->
+<div class="worker-status-bar" id="worker-status-bar"></div>
+
 <!-- Submit -->
 <div class="submit">
   <textarea id="prompt" placeholder="Enter task prompt… (Ctrl+Enter to submit)" rows="1"></textarea>
@@ -420,6 +442,24 @@ function render(stats, tasks, workers) {
   document.getElementById('cs-avg').textContent   = '$' + avgCost.toFixed(4);
   document.getElementById('cs-count').textContent = billedTasks.length;
   document.getElementById('cs-max').textContent   = '$' + maxCost.toFixed(4);
+
+  // ── Worker status bar (horizontal, below cost summary) ──
+  const workerStatusBar = document.getElementById('worker-status-bar');
+  if (!workers || workers.length === 0) {
+    workerStatusBar.innerHTML = '';
+  } else {
+    workerStatusBar.innerHTML = workers.map(w => {
+      const statusClass = w.busy ? 'busy' : 'idle';
+      const taskHtml = w.busy && w.currentTask
+        ? `<span class="worker-status-task">${esc(String(w.currentTask))}</span>`
+        : '';
+      return `<div class="worker-status-card">
+        <span class="worker-status-dot ${statusClass}"></span>
+        <span class="worker-status-name">${esc(w.name)}</span>
+        ${taskHtml}
+      </div>`;
+    }).join('');
+  }
 
   // ── Compact stats bar ──
   const statsBar = document.getElementById('stats-bar');

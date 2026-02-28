@@ -347,20 +347,6 @@ export class Store {
     return rows.map((r) => this.rowToTask(r));
   }
 
-  /** Returns the {@link limit} most recent failure patterns (error + prompt snippet)
-   *  for context injection into future agent prompts. */
-  getFailurePatterns(limit: number): Array<{ error: string; promptSnippet: string }> {
-    const rows = this.db
-      .prepare(
-        "SELECT error, prompt FROM tasks WHERE status IN ('failed', 'timeout') ORDER BY created_at DESC LIMIT ?"
-      )
-      .all(limit) as any[];
-    return rows.map((r) => ({
-      error: r.error as string,
-      promptSnippet: (r.prompt as string).slice(0, 100),
-    }));
-  }
-
   /** Returns the {@link limit} most recent tasks that failed or timed out,
    *  newest first.  Each Task includes the full `error` field. */
   getRecentErrors(limit: number): Task[] {
