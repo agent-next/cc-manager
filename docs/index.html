@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CC-Manager Docs</title>
+    <meta
+      name="description"
+      content="CC-Manager documentation: multi-agent orchestration, budget controls, and merge-safe automation for engineering teams."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./site.css" />
+  </head>
+  <body>
+    <div class="site-backdrop" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./">CC-Manager</a>
+      <nav aria-label="Primary">
+        <a href="#quickstart">Quickstart</a>
+        <a href="#docs">Docs</a>
+        <a href="https://github.com/agent-next/cc-manager" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero reveal">
+        <p class="eyebrow">agent-next / cc-manager</p>
+        <h1>I need a Boris for Claude Code.</h1>
+        <p class="hero-copy">
+          CC-Manager is that Boris: orchestrate parallel coding agents, control spend with explicit guardrails,
+          and merge only verified outcomes back to <code>main</code>.
+        </p>
+
+        <div class="cta-row">
+          <a class="btn primary" href="#quickstart">Start in 3 Minutes</a>
+          <a class="btn ghost" href="https://x.com/bcherny" target="_blank" rel="noreferrer">Boris on X</a>
+        </div>
+
+        <ul class="signal-grid" aria-label="Key capabilities">
+          <li>
+            <strong>Parallel Execution</strong>
+            <span>Isolated git worktrees with up to 20 active workers.</span>
+          </li>
+          <li>
+            <strong>Proof-First Delivery</strong>
+            <span>Task output, diffs, and status streamed in real time.</span>
+          </li>
+          <li>
+            <strong>Repo Operability</strong>
+            <span>Consistent API surface, budgets, retries, and audit trail.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section id="quickstart" class="card reveal">
+        <h2>Quickstart</h2>
+        <p>Pick one install path, then boot the API server and submit your first task.</p>
+
+        <div class="code-grid">
+          <article>
+            <h3>Install</h3>
+            <pre><code># npm
+npm install -g cc-manager
+
+# pnpm
+pnpm add -g cc-manager
+
+# yarn
+yarn global add cc-manager</code></pre>
+          </article>
+
+          <article>
+            <h3>Run</h3>
+            <pre><code>export ANTHROPIC_API_KEY="sk-ant-..."
+
+cc-manager --repo /path/to/your/repo --workers 6</code></pre>
+          </article>
+
+          <article>
+            <h3>Submit a task</h3>
+            <pre><code>curl -X POST http://localhost:8080/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Add input validation to signup form"}'</code></pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="docs" class="card reveal">
+        <h2>Documentation</h2>
+        <div class="docs-grid">
+          <a href="./GETTING_STARTED.md">
+            <h3>Getting Started</h3>
+            <p>Setup, first run, CLI usage, and first API calls.</p>
+          </a>
+          <a href="./OPERATIONS.md">
+            <h3>Operations Guide</h3>
+            <p>Production runbook, upgrades, backups, and troubleshooting.</p>
+          </a>
+          <a href="./CONFIGURATION.md">
+            <h3>Configuration Reference</h3>
+            <p>All flags, env vars, and validated defaults.</p>
+          </a>
+          <a href="./API.md">
+            <h3>API Reference</h3>
+            <p>Task, monitoring, and evolution endpoints with examples.</p>
+          </a>
+          <a href="./AGENT-FLYWHEEL-DESIGN.md">
+            <h3>Agent Flywheel Design</h3>
+            <p>Roadmap from V1 orchestration to autonomous agent trees.</p>
+          </a>
+          <a href="https://github.com/agent-next/cc-manager" target="_blank" rel="noreferrer">
+            <h3>Repository</h3>
+            <p>Source code, issues, releases, and contribution workflow.</p>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>CC-Manager by agent-next.</p>
+    </footer>
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) entry.target.classList.add("in");
+          });
+        },
+        { threshold: 0.1 }
+      );
+
+      document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+    </script>
+  </body>
+</html>
