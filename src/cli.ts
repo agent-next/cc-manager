@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { readFileSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
+import { fileURLToPath } from "node:url";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -291,7 +292,11 @@ program
     }
   });
 
-program.parseAsync().catch((err: Error) => {
-  console.error(`\x1b[31mError:\x1b[0m ${err.message}`);
-  process.exit(1);
-});
+export { program };
+
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  program.parseAsync().catch((err: Error) => {
+    console.error(`\x1b[31mError:\x1b[0m ${err.message}`);
+    process.exit(1);
+  });
+}
