@@ -473,6 +473,66 @@ describe("cli", () => {
     });
   });
 
+  // ─── watch ───────────────────────────────────────────────────────────────────
+
+  describe("watch command", () => {
+    function mockSSEFetch(chunks: string[]) {
+      fetchCalls = [];
+      let chunkIndex = 0;
+      (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+        fetchCalls.push({ url: String(url), init });
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (chunkIndex < chunks.length) {
+                  const encoder = new TextEncoder();
+                  return { done: false, value: encoder.encode(chunks[chunkIndex++]) };
+                }
+                return { done: true, value: undefined };
+              },
+            }),
+          },
+        };
+      };
+    }
+
+    it("connects to /api/events", async () => {
+      mockSSEFetch([]);
+      await run("watch");
+
+      assert.ok(fetchCalls[0].url.includes("/api/events"));
+    });
+
+    it("parses SSE data lines and logs events", async () => {
+      const event = JSON.stringify({ type: "task_started", taskId: "t1", status: "running" });
+      mockSSEFetch([`data: ${event}\n\n`]);
+      await run("watch");
+
+      const output = logs.join("\n");
+      assert.ok(output.includes("task_started"), "should log event type");
+      assert.ok(output.includes("t1"), "should log task ID");
+    });
+
+    it("skips malformed SSE data", async () => {
+      mockSSEFetch(["data: not-valid-json\n\n"]);
+      await run("watch");
+
+      // Should not throw, just silently skip
+      assert.ok(true);
+    });
+
+    it("prints connection message", async () => {
+      mockSSEFetch([]);
+      await run("watch");
+
+      const output = logs.join("\n");
+      assert.ok(output.includes("Watching events"), "should show connection message");
+    });
+  });
+
   // ─── api() Content-Type header ──────────────────────────────────────────────
 
   describe("api() helper behavior", () => {
