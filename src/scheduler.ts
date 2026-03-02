@@ -85,11 +85,29 @@ export class Scheduler {
   }
 
   getTask(id: string): Task | undefined {
-    return this.tasks.get(id) ?? this.store.get(id) ?? undefined;
+    const task = this.tasks.get(id) ?? this.store.get(id) ?? undefined;
+    if (task?.status === "running" && task.startedAt) {
+      task.durationMs = Date.now() - new Date(task.startedAt).getTime();
+      const runningInfo = this.runner.getRunningTasks();
+      const live = runningInfo.find(r => r.id === task.id);
+      if (live) task.costUsd = live.costUsd;
+    }
+    return task;
   }
 
   listTasks(): Task[] {
-    return [...this.tasks.values()];
+    const tasks = [...this.tasks.values()];
+    const now = Date.now();
+    const runningInfo = this.runner.getRunningTasks();
+    const runningMap = new Map(runningInfo.map(r => [r.id, r]));
+    for (const t of tasks) {
+      if (t.status === "running" && t.startedAt) {
+        t.durationMs = now - new Date(t.startedAt).getTime();
+        const live = runningMap.get(t.id);
+        if (live) t.costUsd = live.costUsd;
+      }
+    }
+    return tasks;
   }
 
   getQueuePosition(taskId: string): number {

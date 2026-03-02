@@ -20,6 +20,7 @@ function makePool(): WorktreePool {
 function makeRunner(): AgentRunner {
   return {
     run: async (task: Task) => { task.status = "success"; task.durationMs = 100; return task; },
+    getRunningTasks: () => [],
   } as unknown as AgentRunner;
 }
 
