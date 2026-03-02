@@ -16,7 +16,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/anthropics/cc-manager"
+    "url": "https://github.com/agent-next/cc-manager"
   },
   "engines": {
     "node": ">=20"

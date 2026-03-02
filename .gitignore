@@ -5,4 +5,5 @@ dist/
 .cc-manager.db-wal
 .cc-manager.db-shm
 *.log
+.env
 .DS_Store
