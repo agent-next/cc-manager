@@ -1,9 +1,32 @@
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { AgentRunner } from "../agent-runner.js";
 import { createTask } from "../types.js";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 describe("AgentRunner", () => {
+  // Temp directories for language detection tests
+  let tsDir: string;
+  let pyDir: string;
+  let jsDir: string;
+
+  before(() => {
+    tsDir = mkdtempSync(join(tmpdir(), "test-ts-"));
+    writeFileSync(join(tsDir, "tsconfig.json"), "{}");
+    pyDir = mkdtempSync(join(tmpdir(), "test-py-"));
+    writeFileSync(join(pyDir, "pyproject.toml"), "");
+    jsDir = mkdtempSync(join(tmpdir(), "test-js-"));
+    writeFileSync(join(jsDir, "package.json"), "{}");
+  });
+
+  after(() => {
+    rmSync(tsDir, { recursive: true, force: true });
+    rmSync(pyDir, { recursive: true, force: true });
+    rmSync(jsDir, { recursive: true, force: true });
+  });
+
   // ── estimateCost ──
 
   it("estimateCost returns correct values for sonnet model", () => {
@@ -55,11 +78,36 @@ describe("AgentRunner", () => {
 
   // ── buildSystemPrompt ──
 
-  it("buildSystemPrompt includes tsc instruction", () => {
+  it("buildSystemPrompt includes tsc instruction for TypeScript projects", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix the bug");
+    const prompt = runner.buildSystemPrompt(task, tsDir);
+    assert.ok(prompt.includes("npx tsc"), "prompt should include npx tsc instruction for TS projects");
+  });
+
+  it("buildSystemPrompt includes python instructions for Python projects", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix the bug");
+    const prompt = runner.buildSystemPrompt(task, pyDir);
+    assert.ok(prompt.includes("test suite"), "prompt should include test suite instruction for Python projects");
+    assert.ok(prompt.includes("linter"), "prompt should include linter instruction for Python projects");
+    assert.ok(!prompt.includes("npx tsc"), "prompt should not include tsc for Python projects");
+  });
+
+  it("buildSystemPrompt includes npm test instruction for JavaScript projects", () => {
+    const runner = new AgentRunner();
+    const task = createTask("fix the bug");
+    const prompt = runner.buildSystemPrompt(task, jsDir);
+    assert.ok(prompt.includes("npm test"), "prompt should include npm test for JS projects");
+    assert.ok(!prompt.includes("npx tsc"), "prompt should not include tsc for JS projects");
+  });
+
+  it("buildSystemPrompt includes only commit instruction for unknown projects", () => {
     const runner = new AgentRunner();
     const task = createTask("fix the bug");
     const prompt = runner.buildSystemPrompt(task, "/nonexistent-path-xyz");
-    assert.ok(prompt.includes("npx tsc"), "prompt should include npx tsc instruction");
+    assert.ok(prompt.includes("git add -A"), "prompt should include commit instruction");
+    assert.ok(!prompt.includes("npx tsc"), "prompt should not include tsc for unknown projects");
   });
 
   it("buildSystemPrompt includes test runner hints for test-related tasks", () => {
@@ -188,11 +236,10 @@ describe("AgentRunner", () => {
     const runner = new AgentRunner();
     const task = createTask("hello", { agent: "echo", timeout: 5 });
     await runner.run(task, "/tmp");
-    // echo succeeds → output captured; verifyBuild fails (no tsconfig in /tmp) → status "failed" with [TSC_FAILED]
-    // Validates: (1) generic agent runs and captures output, (2) build verification is enforced
+    // echo succeeds → output captured; verifyBuild skips tsc (no tsconfig in /tmp) → status "success"
+    // Validates: (1) generic agent runs and captures output, (2) build verification is skipped for non-TS
     assert.ok(task.output.includes("hello"), "output should contain the prompt text from echo");
-    assert.strictEqual(task.status, "failed", "should fail due to tsc verification in /tmp");
-    assert.ok(task.output.startsWith("[TSC_FAILED]"), "output should be prefixed with [TSC_FAILED]");
+    assert.strictEqual(task.status, "success", "should succeed since /tmp is not a TS project");
     assert.ok(task.durationMs > 0, "durationMs should be recorded");
   });
 
@@ -253,13 +300,13 @@ describe("AgentRunner", () => {
     assert.strictEqual(typeof result.errors, "string");
   });
 
-  it("verifyBuild returns false when tsc fails", async () => {
+  it("verifyBuild skips tsc for non-TypeScript projects", async () => {
     const runner = new AgentRunner();
     const verify = (runner as unknown as { verifyBuild: (cwd: string) => Promise<{ ok: boolean; errors: string }> }).verifyBuild.bind(runner);
-    // /tmp has no tsconfig.json, so tsc will fail
+    // /tmp has no tsconfig.json, so verifyBuild should skip tsc and return ok
     const result = await verify("/tmp");
-    assert.strictEqual(result.ok, false);
-    assert.ok(result.errors.length > 0, "should have error message");
+    assert.strictEqual(result.ok, true, "should return ok for non-TS projects");
+    assert.strictEqual(result.errors, "", "should have no errors for non-TS projects");
   });
 
   // ── buildSystemPrompt edge cases ──
@@ -269,15 +316,15 @@ describe("AgentRunner", () => {
     const task = createTask("fix something");
     // Use actual project root where CLAUDE.md exists
     const prompt = runner.buildSystemPrompt(task, process.cwd() + "/../..");
-    // CLAUDE.md in project root has "## Development Rules" section
-    assert.ok(prompt.includes(".js"), "should include .js extension rule");
+    // Prompt should always include the commit instruction regardless of language
+    assert.ok(prompt.includes("git add -A"), "should include commit instruction");
   });
 
   it("buildSystemPrompt works without CLAUDE.md file", () => {
     const runner = new AgentRunner();
     const task = createTask("fix something");
     const prompt = runner.buildSystemPrompt(task, "/nonexistent-path");
-    assert.ok(prompt.includes("npx tsc"), "should still include tsc instruction");
+    assert.ok(prompt.includes("git add -A"), "should include commit instruction even without CLAUDE.md");
     assert.ok(prompt.length > 0);
   });
 
