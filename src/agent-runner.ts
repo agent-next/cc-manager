@@ -1,4 +1,4 @@
-import { type Task, type TaskEvent, createTask } from "./types.js";
+import { type Task, type TaskEvent, type ReviewResult, createTask } from "./types.js";
 import { log } from "./logger.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { exec as execCb } from "node:child_process";
@@ -50,13 +50,7 @@ export interface RunningTaskInfo {
   costUsd: number;
 }
 
-export interface ReviewResult {
-  approve: boolean;
-  score: number;
-  issues: string[];
-  suggestions: string[];
-  reviewAgent?: string;
-}
+export type { ReviewResult };
 
 export class AgentRunner {
   private readonly _runningTasks = new Map<string, RunningTaskEntry>();

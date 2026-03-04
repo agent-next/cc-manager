@@ -401,6 +401,14 @@ describe("AgentRunner", () => {
     assert.strictEqual(result.score, 100);
   });
 
+  it("parseReviewResponse returns null when approve or score is missing/wrong type", () => {
+    const runner = new AgentRunner();
+    const parse = (runner as unknown as { parseReviewResponse: (s: string) => ReviewResult | null }).parseReviewResponse.bind(runner);
+    assert.strictEqual(parse('{"score": 80, "issues": []}'), null); // missing approve
+    assert.strictEqual(parse('{"approve": "yes", "score": 80}'), null); // approve is string
+    assert.strictEqual(parse('{"approve": true, "issues": []}'), null); // missing score
+  });
+
   // ── reviewDiff approve field ──
 
   it("reviewDiff includes approve field based on score threshold", () => {
