@@ -1,4 +1,4 @@
-import type { Task, TaskEvent } from "./types.js";
+import { type Task, type TaskEvent, createTask } from "./types.js";
 import { log } from "./logger.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { exec as execCb } from "node:child_process";
@@ -51,6 +51,7 @@ export interface RunningTaskInfo {
 }
 
 export interface ReviewResult {
+  approve: boolean;
   score: number;
   issues: string[];
   suggestions: string[];
@@ -91,7 +92,126 @@ export class AgentRunner {
       score -= 10;
     }
 
-    return { score, issues, suggestions };
+    return { approve: score >= 40, score, issues, suggestions };
+  }
+
+  /**
+   * Select the cross-review agent: the reviewer should be a different agent
+   * than the one that wrote the code.
+   */
+  static pickReviewAgent(taskAgent: string): string {
+    if (taskAgent === "codex") return "claude";
+    if (taskAgent === "claude" || taskAgent === "claude-sdk") return "codex";
+    return "claude"; // generic agents reviewed by claude
+  }
+
+  /**
+   * Spawn a cross-agent to review a git diff. Returns a structured ReviewResult.
+   * Falls back to the heuristic reviewDiff() if the agent fails or times out.
+   */
+  async reviewDiffWithAgent(
+    diff: string,
+    taskAgent: string,
+    cwd: string,
+    timeout: number = 60,
+  ): Promise<ReviewResult> {
+    const reviewAgent = AgentRunner.pickReviewAgent(taskAgent);
+    const truncatedDiff = diff.length > 50_000 ? diff.slice(0, 50_000) + "\n... (truncated)" : diff;
+
+    const reviewPrompt = [
+      "You are a code reviewer. Review the following git diff and respond with ONLY a JSON object (no markdown, no explanation).",
+      "",
+      "IMPORTANT: Do NOT modify any files. Do NOT run any commands. Only output your JSON review.",
+      "",
+      "Evaluate:",
+      "1. Correctness: Are there bugs, logic errors, or missing edge cases?",
+      "2. Quality: Is the code clean, readable, and maintainable?",
+      "3. Safety: Are there security issues, hardcoded secrets, or dangerous patterns?",
+      "",
+      "Respond with exactly this JSON format:",
+      '{"approve": true/false, "score": 0-100, "issues": ["issue1", ...], "suggestions": ["suggestion1", ...]}',
+      "",
+      "approve=true means the code is ready to merge. approve=false means it needs fixes.",
+      "Be pragmatic — minor style issues should not block merge. Focus on correctness and safety.",
+      "",
+      "```diff",
+      truncatedDiff,
+      "```",
+    ].join("\n");
+
+    const reviewTask = createTask(reviewPrompt, {
+      agent: reviewAgent,
+      timeout,
+      maxBudget: 1,
+    });
+
+    try {
+      log("info", "cross-agent review started", { taskAgent, reviewAgent });
+      // Run review in /tmp to prevent the reviewer from modifying the worktree
+      await this.run(reviewTask, "/tmp");
+
+      if (reviewTask.status !== "success" || !reviewTask.output) {
+        log("warn", "cross-agent review did not succeed, falling back to heuristic", {
+          status: reviewTask.status,
+          error: reviewTask.error,
+        });
+        return this.reviewDiff(diff);
+      }
+
+      // Parse the JSON response from the review agent
+      const parsed = this.parseReviewResponse(reviewTask.output);
+      if (parsed) {
+        log("info", "cross-agent review complete", {
+          reviewAgent,
+          approve: parsed.approve,
+          score: parsed.score,
+          issueCount: parsed.issues.length,
+        });
+        return parsed;
+      }
+
+      log("warn", "cross-agent review response unparseable, falling back to heuristic");
+      return this.reviewDiff(diff);
+    } catch (err: unknown) {
+      const msg = (err as Error).message ?? String(err);
+      log("warn", "cross-agent review failed, falling back to heuristic", { error: msg });
+      return this.reviewDiff(diff);
+    }
+  }
+
+  /** Try to extract a ReviewResult JSON from agent output (may contain surrounding text). */
+  private parseReviewResponse(output: string): ReviewResult | null {
+    // Try direct JSON parse first
+    try {
+      const obj = JSON.parse(output.trim());
+      if (typeof obj.approve === "boolean" && typeof obj.score === "number") {
+        return {
+          approve: obj.approve,
+          score: Math.max(0, Math.min(100, obj.score)),
+          issues: Array.isArray(obj.issues) ? obj.issues.map(String) : [],
+          suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
+        };
+      }
+    } catch { /* not pure JSON */ }
+
+    // Try to find JSON object in the output (agent may wrap it in text)
+    // Use [^{}]* to avoid greedily matching across multiple JSON objects
+    const candidates = [...output.matchAll(/\{[^{}]*"approve"\s*:\s*(true|false)[^{}]*\}/g)];
+    for (const match of candidates) {
+      try {
+        const obj = JSON.parse(match[0]);
+        if (typeof obj.approve === "boolean" && typeof obj.score === "number") {
+          return {
+            approve: obj.approve,
+            score: Math.max(0, Math.min(100, obj.score)),
+            issues: Array.isArray(obj.issues) ? obj.issues.map(String) : [],
+            suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
+          };
+        }
+      } catch { /* try next candidate */ }
+    }
+
+    return null;
   }
 
   /** Returns info about all tasks currently being executed by this runner. */

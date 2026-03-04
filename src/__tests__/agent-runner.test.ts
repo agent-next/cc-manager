@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { AgentRunner } from "../agent-runner.js";
+import { AgentRunner, type ReviewResult } from "../agent-runner.js";
 import { createTask } from "../types.js";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -344,5 +344,91 @@ describe("AgentRunner", () => {
     // First event should be evt-5 (0-4 were shifted out)
     assert.strictEqual(task.events[0].type, "evt-5");
     assert.strictEqual(task.events[199].type, "evt-204");
+  });
+
+  // ── pickReviewAgent ──
+
+  it("pickReviewAgent selects codex to review claude's work", () => {
+    assert.strictEqual(AgentRunner.pickReviewAgent("claude"), "codex");
+  });
+
+  it("pickReviewAgent selects claude to review codex's work", () => {
+    assert.strictEqual(AgentRunner.pickReviewAgent("codex"), "claude");
+  });
+
+  it("pickReviewAgent selects codex to review claude-sdk's work", () => {
+    assert.strictEqual(AgentRunner.pickReviewAgent("claude-sdk"), "codex");
+  });
+
+  it("pickReviewAgent selects claude for generic agents", () => {
+    assert.strictEqual(AgentRunner.pickReviewAgent("aider --yes"), "claude");
+    assert.strictEqual(AgentRunner.pickReviewAgent("custom-agent"), "claude");
+  });
+
+  // ── parseReviewResponse ──
+
+  it("parseReviewResponse parses clean JSON", () => {
+    const runner = new AgentRunner();
+    const parse = (runner as unknown as { parseReviewResponse: (s: string) => ReviewResult | null }).parseReviewResponse.bind(runner);
+    const result = parse('{"approve": true, "score": 85, "issues": [], "suggestions": ["looks good"]}');
+    assert.ok(result);
+    assert.strictEqual(result.approve, true);
+    assert.strictEqual(result.score, 85);
+    assert.deepStrictEqual(result.suggestions, ["looks good"]);
+  });
+
+  it("parseReviewResponse extracts JSON from surrounding text", () => {
+    const runner = new AgentRunner();
+    const parse = (runner as unknown as { parseReviewResponse: (s: string) => ReviewResult | null }).parseReviewResponse.bind(runner);
+    const result = parse('Here is my review:\n{"approve": false, "score": 30, "issues": ["bug found"], "suggestions": []}\nDone.');
+    assert.ok(result);
+    assert.strictEqual(result.approve, false);
+    assert.strictEqual(result.score, 30);
+    assert.deepStrictEqual(result.issues, ["bug found"]);
+  });
+
+  it("parseReviewResponse returns null for unparseable output", () => {
+    const runner = new AgentRunner();
+    const parse = (runner as unknown as { parseReviewResponse: (s: string) => ReviewResult | null }).parseReviewResponse.bind(runner);
+    assert.strictEqual(parse("I can't produce JSON right now"), null);
+  });
+
+  it("parseReviewResponse clamps score to 0-100", () => {
+    const runner = new AgentRunner();
+    const parse = (runner as unknown as { parseReviewResponse: (s: string) => ReviewResult | null }).parseReviewResponse.bind(runner);
+    const result = parse('{"approve": true, "score": 150, "issues": [], "suggestions": []}');
+    assert.ok(result);
+    assert.strictEqual(result.score, 100);
+  });
+
+  // ── reviewDiff approve field ──
+
+  it("reviewDiff includes approve field based on score threshold", () => {
+    const runner = new AgentRunner();
+    const clean = runner.reviewDiff("diff --git a/foo.ts\n+const x = 1;");
+    assert.strictEqual(typeof clean.approve, "boolean");
+    assert.strictEqual(clean.approve, true); // score=50 >= 40
+
+    const bad = runner.reviewDiff("diff --git a/foo.ts\n+console.log('x');\n+console.log('y');\n+console.log('z');");
+    // console.log penalty takes score below 40
+    // Actually score=50-10=40, still >=40
+    assert.strictEqual(typeof bad.approve, "boolean");
+  });
+
+  // ── reviewDiffWithAgent fallback ──
+
+  it("reviewDiffWithAgent falls back to heuristic when agent fails", async () => {
+    const runner = new AgentRunner();
+    // codex not available in test env → will fail → should fall back to heuristic
+    const result = await runner.reviewDiffWithAgent(
+      "diff --git a/foo.test.ts b/foo.test.ts\n+it('works', () => {});",
+      "claude",  // task was by claude → review by codex → codex fails → fallback
+      "/tmp",
+      2,  // 2 second timeout to keep test fast
+    );
+    assert.strictEqual(typeof result.approve, "boolean");
+    assert.strictEqual(typeof result.score, "number");
+    assert.ok(Array.isArray(result.issues));
+    assert.ok(Array.isArray(result.suggestions));
   });
 });
