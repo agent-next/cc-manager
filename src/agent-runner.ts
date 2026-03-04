@@ -55,6 +55,7 @@ export interface ReviewResult {
   score: number;
   issues: string[];
   suggestions: string[];
+  reviewAgent?: string;
 }
 
 export class AgentRunner {
@@ -160,6 +161,7 @@ export class AgentRunner {
       // Parse the JSON response from the review agent
       const parsed = this.parseReviewResponse(reviewTask.output);
       if (parsed) {
+        parsed.reviewAgent = reviewAgent;
         log("info", "cross-agent review complete", {
           reviewAgent,
           approve: parsed.approve,
@@ -182,35 +184,31 @@ export class AgentRunner {
   private parseReviewResponse(output: string): ReviewResult | null {
     // Try direct JSON parse first
     try {
-      const obj = JSON.parse(output.trim());
-      if (typeof obj.approve === "boolean" && typeof obj.score === "number") {
-        return {
-          approve: obj.approve,
-          score: Math.max(0, Math.min(100, obj.score)),
-          issues: Array.isArray(obj.issues) ? obj.issues.map(String) : [],
-          suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
-        };
-      }
+      const result = this.normalizeReviewObj(JSON.parse(output.trim()));
+      if (result) return result;
     } catch { /* not pure JSON */ }
 
-    // Try to extract JSON by finding the outermost { } that contains "approve"
+    // Try to extract JSON by finding the outermost { }
     const start = output.indexOf("{");
     const end = output.lastIndexOf("}");
     if (start !== -1 && end > start) {
       try {
-        const obj = JSON.parse(output.slice(start, end + 1));
-        if (typeof obj.approve === "boolean" && typeof obj.score === "number") {
-          return {
-            approve: obj.approve,
-            score: Math.max(0, Math.min(100, obj.score)),
-            issues: Array.isArray(obj.issues) ? obj.issues.map(String) : [],
-            suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
-          };
-        }
+        const result = this.normalizeReviewObj(JSON.parse(output.slice(start, end + 1)));
+        if (result) return result;
       } catch { /* not valid JSON */ }
     }
 
     return null;
+  }
+
+  private normalizeReviewObj(obj: Record<string, unknown>): ReviewResult | null {
+    if (typeof obj.approve !== "boolean" || typeof obj.score !== "number") return null;
+    return {
+      approve: obj.approve,
+      score: Math.max(0, Math.min(100, obj.score)),
+      issues: Array.isArray(obj.issues) ? obj.issues.map(String) : [],
+      suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
+    };
   }
 
   /** Returns info about all tasks currently being executed by this runner. */

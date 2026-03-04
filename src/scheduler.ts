@@ -478,8 +478,7 @@ export class Scheduler {
         const diff = (diffEvent?.data as { diff?: string } | undefined)?.diff;
         if (diff) {
           const taskAgent = task.agent ?? "claude";
-          const reviewAgent = AgentRunner.pickReviewAgent(taskAgent);
-          this.onEvent?.({ type: "review_started", taskId: task.id, reviewAgent });
+          this.onEvent?.({ type: "review_started", taskId: task.id, reviewAgent: AgentRunner.pickReviewAgent(taskAgent) });
           const review = await this.runner.reviewDiffWithAgent(diff, taskAgent);
           task.review = review;
           if (!review.approve) {
