@@ -3,7 +3,7 @@ import { log } from "./logger.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 const execAsync = promisify(execCb);
 
@@ -114,6 +114,13 @@ export class AgentRunner {
     return env;
   }
 
+  private detectLanguage(cwd: string): "typescript" | "javascript" | "python" | "unknown" {
+    if (existsSync(`${cwd}/tsconfig.json`)) return "typescript";
+    if (existsSync(`${cwd}/pyproject.toml`) || existsSync(`${cwd}/setup.py`) || existsSync(`${cwd}/setup.cfg`)) return "python";
+    if (existsSync(`${cwd}/package.json`)) return "javascript";
+    return "unknown";
+  }
+
   buildSystemPrompt(task: Task, cwd: string = process.cwd()): string {
     const parts: string[] = [];
 
@@ -128,9 +135,17 @@ export class AgentRunner {
       // CLAUDE.md not found – skip gracefully
     }
 
-    // Always-included instructions
-    parts.push("- Always use `.js` extensions in import paths (e.g. `import { foo } from \"./bar.js\"`).");
-    parts.push("- After making changes, run `npx tsc` to verify there are no type errors.");
+    // Language-aware instructions
+    const lang = this.detectLanguage(cwd);
+    if (lang === "typescript") {
+      parts.push("- Always use `.js` extensions in import paths (e.g. `import { foo } from \"./bar.js\"`).");
+      parts.push("- After making changes, run `npx tsc` to verify there are no type errors.");
+    } else if (lang === "python") {
+      parts.push("- After making changes, run the project's test suite to verify.");
+      parts.push("- Use the project's existing linter (ruff, flake8, etc.) if configured.");
+    } else if (lang === "javascript") {
+      parts.push("- After making changes, run `npm test` if configured.");
+    }
     parts.push("- Stage and commit all changes with `git add -A && git commit -m \"feat: <brief summary>\"`.");
 
     // Conditional: test or spec
@@ -241,7 +256,7 @@ export class AgentRunner {
     }
 
     const sysPrompt = this.buildSystemPrompt(task, cwd);
-    const fullPrompt = this.buildTaskPrompt(task);
+    const fullPrompt = this.buildTaskPrompt(task, cwd);
     const env = this.cleanEnv();
 
     const ac = new AbortController();
@@ -294,7 +309,7 @@ export class AgentRunner {
   private runClaude(task: Task, cwd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
     return new Promise((resolve, reject) => {
       const sysPrompt = this.buildSystemPrompt(task, cwd);
-      const fullPrompt = this.buildTaskPrompt(task);
+      const fullPrompt = this.buildTaskPrompt(task, cwd);
 
       const args = [
         "-p",
@@ -431,7 +446,7 @@ export class AgentRunner {
   /** Run task using Codex CLI (exec mode with JSON output). */
   private runCodex(task: Task, cwd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
     return new Promise((resolve, reject) => {
-      const fullPrompt = this.buildTaskPrompt(task);
+      const fullPrompt = this.buildTaskPrompt(task, cwd);
 
       const args = [
         "exec",
@@ -545,7 +560,7 @@ export class AgentRunner {
   /** Run task using any generic CLI command. The prompt is appended as the last argument. */
   private runGeneric(task: Task, cwd: string, agentCmd: string, startMs: number, onEvent?: EventCallback): Promise<void> {
     return new Promise((resolve, reject) => {
-      const fullPrompt = this.buildTaskPrompt(task);
+      const fullPrompt = this.buildTaskPrompt(task, cwd);
 
       // Split the agent command on whitespace: e.g. "aider --yes" → ["aider", "--yes"]
       const parts = agentCmd.split(/\s+/).filter(Boolean);
@@ -598,22 +613,43 @@ export class AgentRunner {
   }
 
   /** Build the full task prompt with instructions appended. */
-  private buildTaskPrompt(task: Task): string {
-    return `${task.prompt}
+  private buildTaskPrompt(task: Task, cwd: string = process.cwd()): string {
+    const lang = this.detectLanguage(cwd);
+    const lines: string[] = [
+      `${task.prompt}`,
+      "",
+      "---",
+      "",
+      "## Instructions",
+      "",
+      "- **Minimal changes**: Only modify what is necessary to complete the task. Do not refactor, reformat, or touch unrelated code.",
+    ];
 
----
+    if (lang === "typescript") {
+      lines.push("- **TypeScript imports**: Always use `.js` extensions in import paths (e.g. `import { foo } from \"./bar.js\"`).");
+      lines.push("- **Type checking**: After making changes, run `npx tsc` to catch type errors.");
+      lines.push("- **Fix before committing**: If `npx tsc` fails, fix all errors before proceeding to commit.");
+      lines.push("- **Commit when done**: Stage and commit all changes with `git add -A && git commit -m \"feat: <brief summary>\"`.");
+    } else if (lang === "python") {
+      lines.push("- **Python project**: Use the project's build system (pyproject.toml / setup.py).");
+      lines.push("- **Verification**: Run relevant tests to verify changes work.");
+      lines.push("- **Commit when done**: Stage and commit with `git add -A && git commit -m \"feat: <brief summary>\"`.");
+    } else if (lang === "javascript") {
+      lines.push("- **Verification**: Run `npm test` if configured.");
+      lines.push("- **Commit when done**: Stage and commit with `git add -A && git commit -m \"feat: <brief summary>\"`.");
+    } else {
+      lines.push("- **Commit when done**: Stage and commit with `git add -A && git commit -m \"feat: <brief summary>\"`.");
+    }
 
-## Instructions
-
-- **Minimal changes**: Only modify what is necessary to complete the task. Do not refactor, reformat, or touch unrelated code.
-- **TypeScript imports**: Always use \`.js\` extensions in import paths (e.g. \`import { foo } from "./bar.js"\`).
-- **Type checking**: After making changes, run \`npx tsc\` to catch type errors.
-- **Fix before committing**: If \`npx tsc\` fails, fix all errors before proceeding to commit.
-- **Commit when done**: Stage and commit all changes with \`git add -A && git commit -m "feat: <brief summary>"\`.`;
+    return lines.join("\n");
   }
 
   /** Async build verification — does not block the event loop. */
   private async verifyBuild(cwd: string): Promise<{ ok: boolean; errors: string }> {
+    const lang = this.detectLanguage(cwd);
+    if (lang !== "typescript") {
+      return { ok: true, errors: "" };
+    }
     try {
       await execAsync("npx tsc --noEmit", { cwd, encoding: "utf8" });
       return { ok: true, errors: "" };
