@@ -897,8 +897,11 @@ describe("Scheduler", () => {
       assert.ok(task.review);
       assert.strictEqual(task.review!.approve, false);
       assert.strictEqual(task.review!.score, 25);
-      // Should have emitted review_rejected event
-      assert.ok(events.some(e => e.type === "review_rejected"));
+      // Error should explain why merge was blocked
+      assert.ok(task.error.includes("review rejected"), "error should explain rejection");
+      // Should have emitted review_started and review_rejected events
+      assert.ok(events.some(e => e.type === "review_started"), "should emit review_started");
+      assert.ok(events.some(e => e.type === "review_rejected"), "should emit review_rejected");
     });
 
     it("review gate allows merge when review approves", async () => {
@@ -942,7 +945,8 @@ describe("Scheduler", () => {
       assert.strictEqual(mergeCalledWith, true);
       assert.ok(task.review);
       assert.strictEqual(task.review!.approve, true);
-      assert.ok(events.some(e => e.type === "review_approved"));
+      assert.ok(events.some(e => e.type === "review_started"), "should emit review_started");
+      assert.ok(events.some(e => e.type === "review_approved"), "should emit review_approved");
     });
 
     it("skips review when task has no diff", async () => {

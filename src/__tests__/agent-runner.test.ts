@@ -423,7 +423,6 @@ describe("AgentRunner", () => {
     const result = await runner.reviewDiffWithAgent(
       "diff --git a/foo.test.ts b/foo.test.ts\n+it('works', () => {});",
       "claude",  // task was by claude → review by codex → codex fails → fallback
-      "/tmp",
       2,  // 2 second timeout to keep test fast
     );
     assert.strictEqual(typeof result.approve, "boolean");

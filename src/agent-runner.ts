@@ -112,7 +112,6 @@ export class AgentRunner {
   async reviewDiffWithAgent(
     diff: string,
     taskAgent: string,
-    cwd: string,
     timeout: number = 60,
   ): Promise<ReviewResult> {
     const reviewAgent = AgentRunner.pickReviewAgent(taskAgent);
@@ -194,12 +193,12 @@ export class AgentRunner {
       }
     } catch { /* not pure JSON */ }
 
-    // Try to find JSON object in the output (agent may wrap it in text)
-    // Use [^{}]* to avoid greedily matching across multiple JSON objects
-    const candidates = [...output.matchAll(/\{[^{}]*"approve"\s*:\s*(true|false)[^{}]*\}/g)];
-    for (const match of candidates) {
+    // Try to extract JSON by finding the outermost { } that contains "approve"
+    const start = output.indexOf("{");
+    const end = output.lastIndexOf("}");
+    if (start !== -1 && end > start) {
       try {
-        const obj = JSON.parse(match[0]);
+        const obj = JSON.parse(output.slice(start, end + 1));
         if (typeof obj.approve === "boolean" && typeof obj.score === "number") {
           return {
             approve: obj.approve,
@@ -208,7 +207,7 @@ export class AgentRunner {
             suggestions: Array.isArray(obj.suggestions) ? obj.suggestions.map(String) : [],
           };
         }
-      } catch { /* try next candidate */ }
+      } catch { /* not valid JSON */ }
     }
 
     return null;

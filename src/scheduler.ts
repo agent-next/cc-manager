@@ -480,10 +480,11 @@ export class Scheduler {
           const taskAgent = task.agent ?? "claude";
           const reviewAgent = AgentRunner.pickReviewAgent(taskAgent);
           this.onEvent?.({ type: "review_started", taskId: task.id, reviewAgent });
-          const review = await this.runner.reviewDiffWithAgent(diff, taskAgent, workerPath);
+          const review = await this.runner.reviewDiffWithAgent(diff, taskAgent);
           task.review = review;
           if (!review.approve) {
             shouldMerge = false;
+            task.error = `review rejected (score ${review.score}): ${review.issues.join("; ")}`;
             log("info", "cross-agent review rejected merge", {
               taskId: task.id,
               score: review.score,
