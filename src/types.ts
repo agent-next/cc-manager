@@ -31,13 +31,14 @@ export interface Task {
   durationMs: number;
   retryCount: number;
   maxRetries: number;
-  dependsOn?: string;
+  dependsOn?: string | string[];
   tags?: string[];
   webhookUrl?: string;
   summary?: string;
   agent?: string;
   model?: string;
   review?: ReviewResult;
+  _originalPrompt?: string;
 }
 
 export interface TaskEvent {

@@ -441,7 +441,8 @@ export class Scheduler {
 
       // Dependency check: skip if dependency hasn't completed successfully yet
       if (task.dependsOn) {
-        const dep = this.tasks.get(task.dependsOn) ?? this.store.get(task.dependsOn) ?? undefined;
+        const depId = Array.isArray(task.dependsOn) ? task.dependsOn[0] : task.dependsOn as string;
+        const dep = this.tasks.get(depId) ?? this.store.get(depId) ?? undefined;
         if (dep?.status !== "success") {
           // If dependency is in a terminal failure state (or missing), fail this task
           if (!dep || dep.status === "failed" || dep.status === "timeout" || dep.status === "cancelled") {
