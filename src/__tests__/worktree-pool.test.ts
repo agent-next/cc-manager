@@ -349,6 +349,101 @@ describe("WorktreePool lookup", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Squash merge
+// ---------------------------------------------------------------------------
+
+describe("WorktreePool squash merge", () => {
+  it("release(name, true, taskId) squash-merges to single commit", async () => {
+    const { repoPath, cleanup } = await makeTempRepo();
+    try {
+      const pool = new WorktreePool(repoPath, 1);
+      await pool.init();
+
+      const worker = await pool.acquire();
+      assert.ok(worker !== null, "should acquire a worker");
+
+      const git = (...args: string[]) => execFileAsync("git", args, { cwd: worker.path });
+
+      // Count commits on main before
+      const { stdout: mainLogBefore } = await execFileAsync("git", ["log", "--oneline", "main"], { cwd: repoPath });
+      const mainCommitsBefore = mainLogBefore.trim().split("\n").length;
+
+      // Make 3 commits in the worktree (simulating agent work)
+      fs.writeFileSync(path.join(worker.path, "file1.txt"), "hello\n");
+      await git("add", "file1.txt");
+      await git("commit", "-m", "agent commit 1");
+
+      fs.writeFileSync(path.join(worker.path, "file2.txt"), "world\n");
+      await git("add", "file2.txt");
+      await git("commit", "-m", "agent commit 2");
+
+      fs.writeFileSync(path.join(worker.path, "file3.txt"), "!\n");
+      await git("add", "file3.txt");
+      await git("commit", "-m", "agent commit 3");
+
+      // Release with squash merge
+      const result = await pool.release(worker.name, true, "test123");
+      assert.strictEqual(result.merged, true, "merge should succeed");
+
+      // Assert: main has exactly 1 new commit (squashed)
+      const { stdout: mainLogAfter } = await execFileAsync("git", ["log", "--oneline", "main"], { cwd: repoPath });
+      const mainCommitsAfter = mainLogAfter.trim().split("\n").length;
+      assert.strictEqual(mainCommitsAfter, mainCommitsBefore + 1, "main should have exactly 1 new commit");
+
+      // Assert: the squash commit message contains the taskId
+      const { stdout: lastCommit } = await execFileAsync("git", ["log", "-1", "--format=%s", "main"], { cwd: repoPath });
+      assert.ok(lastCommit.includes("task(test123)"), `commit msg should contain task(test123), got: ${lastCommit.trim()}`);
+
+      // Assert: refs/tasks/test123 exists
+      const { stdout: refOut } = await execFileAsync("git", ["show-ref", "refs/tasks/test123"], { cwd: repoPath });
+      assert.ok(refOut.trim().length > 0, "refs/tasks/test123 should exist");
+
+      // Assert: the ref preserves all 3 original commits
+      const { stdout: refLog } = await execFileAsync("git", ["log", "--oneline", "refs/tasks/test123"], { cwd: repoPath });
+      const refCommits = refLog.trim().split("\n");
+      // 3 agent commits + 1 initial commit = 4 total
+      assert.strictEqual(refCommits.length, 4, "ref should show all 3 agent commits + initial");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("release(name, true) without taskId falls back to legacy merge", async () => {
+    const { repoPath, cleanup } = await makeTempRepo();
+    try {
+      const pool = new WorktreePool(repoPath, 1);
+      await pool.init();
+
+      const worker = await pool.acquire();
+      assert.ok(worker !== null);
+
+      const git = (...args: string[]) => execFileAsync("git", args, { cwd: worker.path });
+
+      // Make 2 commits
+      fs.writeFileSync(path.join(worker.path, "a.txt"), "a\n");
+      await git("add", "a.txt");
+      await git("commit", "-m", "commit a");
+
+      fs.writeFileSync(path.join(worker.path, "b.txt"), "b\n");
+      await git("add", "b.txt");
+      await git("commit", "-m", "commit b");
+
+      // Release WITHOUT taskId — should use legacy ff/merge
+      const result = await pool.release(worker.name, true);
+      assert.strictEqual(result.merged, true, "merge should succeed");
+
+      // Main should have all individual commits (not squashed)
+      const { stdout: mainLog } = await execFileAsync("git", ["log", "--oneline", "main"], { cwd: repoPath });
+      const commits = mainLog.trim().split("\n");
+      // initial + 2 agent commits = 3 (ff merge preserves all)
+      assert.ok(commits.length >= 3, `expected >= 3 commits on main, got ${commits.length}`);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Worker stats
 // ---------------------------------------------------------------------------
 

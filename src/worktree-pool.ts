@@ -98,7 +98,7 @@ export class WorktreePool {
     }
   }
 
-  async release(name: string, merge: boolean): Promise<{ merged: boolean; conflictFiles?: string[] }> {
+  async release(name: string, merge: boolean, taskId?: string): Promise<{ merged: boolean; conflictFiles?: string[] }> {
     await this.waitLock();
     this.lock = true;
     try {
@@ -108,7 +108,7 @@ export class WorktreePool {
       let result: { merged: boolean; conflictFiles?: string[] } = { merged: true };
       if (merge) {
         try {
-          result = await this.mergeToMain(w);
+          result = await this.mergeToMain(w, taskId);
         } catch (err) {
           log("error", "[pool] release: mergeToMain failed", { worker: w.name, err: String(err) });
           throw new Error(`Failed to merge worktree '${w.name}' to main: ${String(err)}`);
@@ -183,42 +183,96 @@ export class WorktreePool {
     }
   }
 
-  private async mergeToMain(w: WorkerInfo): Promise<{ merged: boolean; conflictFiles?: string[] }> {
+  private async mergeToMain(w: WorkerInfo, taskId?: string): Promise<{ merged: boolean; conflictFiles?: string[] }> {
     // Check if branch has new commits vs main
     const { stdout: diff } = await this.git("log", `main..${w.branch}`, "--oneline");
     if (!diff.trim()) return { merged: true };
 
-    log("info", "[pool] merging branch", { branch: w.branch, target: "main" });
+    log("info", "[pool] merging branch", { branch: w.branch, target: "main", taskId });
 
-    // Safe merge: update the main ref without touching HEAD or working tree.
-    // First try fast-forward via `git fetch . <branch>:main`.
-    // If that fails (non-ff), do a real merge in the worktree instead.
+    // When taskId is provided, use squash merge to keep main clean.
+    // Otherwise fall back to the legacy ff/merge behavior for backward compat.
+    if (taskId) {
+      return this.squashMergeToMain(w, taskId, diff.trim());
+    }
+
+    // Legacy path: fast-forward or merge commit
     try {
       await this.git("fetch", ".", `${w.branch}:main`);
     } catch {
-      // Non-fast-forward — merge in the worktree where it's safe
+      // Non-fast-forward — merge in worktree via temp branch (can't checkout main directly)
+      const tmpBranch = `_merge_legacy_${Date.now()}`;
       try {
-        await this.gitIn(w.path, "checkout", "main");
+        const mainSha = (await this.git("rev-parse", "main")).stdout.trim();
+        await this.gitIn(w.path, "checkout", "-b", tmpBranch, mainSha);
         await this.gitIn(w.path, "merge", w.branch, "--no-edit");
-        // Push the merged main back to the main repo ref
-        await this.git("fetch", w.path, "main:main");
+        const mergedSha = (await this.gitIn(w.path, "rev-parse", "HEAD")).stdout.trim();
+        await this.git("update-ref", "refs/heads/main", mergedSha);
       } catch {
-        let conflictFiles: string[] = [];
-        try {
-          const { stdout } = await this.gitIn(w.path, "diff", "--name-only", "--diff-filter=U");
-          conflictFiles = stdout.trim().split("\n").filter(Boolean);
-        } catch {}
-
-        log("warn", "[pool] merge conflict, aborting", { branch: w.branch });
-        await this.gitIn(w.path, "merge", "--abort").catch(() => {});
-        await this.gitIn(w.path, "checkout", w.branch).catch(() => {});
-        return { merged: false, conflictFiles };
+        await this.cleanupTmpBranch(w, tmpBranch);
+        return this.handleMergeConflict(w);
       }
+      await this.cleanupTmpBranch(w, tmpBranch);
     }
 
-    // Reset worktree to latest main
     await this.resetWorktree(w);
     return { merged: true };
+  }
+
+  private async squashMergeToMain(
+    w: WorkerInfo,
+    taskId: string,
+    logOutput: string,
+  ): Promise<{ merged: boolean; conflictFiles?: string[] }> {
+    // Use the most recent commit message as summary (git log outputs newest first)
+    const firstLine = logOutput.split("\n")[0] ?? "";
+    const rawSummary = firstLine.replace(/^[0-9a-f]+\s+/, "");
+    const summary = rawSummary.length <= 72
+      ? rawSummary
+      : rawSummary.slice(0, 72).replace(/\s+\S*$/, "");
+
+    // Cache branch tip before merge — avoids redundant rev-parse after
+    const branchTip = (await this.gitIn(w.path, "rev-parse", w.branch)).stdout.trim();
+
+    // Can't `checkout main` in a worktree (git refuses if main is checked out
+    // by the main repo). Instead, create a temporary branch from main, squash
+    // there, then update the main ref via update-ref.
+    const tmpBranch = `_squash_${taskId}_${Date.now()}`;
+    try {
+      const mainSha = (await this.git("rev-parse", "main")).stdout.trim();
+      await this.gitIn(w.path, "checkout", "-b", tmpBranch, mainSha);
+      await this.gitIn(w.path, "merge", "--squash", w.branch);
+      await this.gitIn(w.path, "commit", "-m", `task(${taskId}): ${summary}`);
+      const squashedSha = (await this.gitIn(w.path, "rev-parse", "HEAD")).stdout.trim();
+      await this.git("update-ref", "refs/heads/main", squashedSha);
+      // Preserve the full agent commit history only after successful merge
+      await this.git("update-ref", `refs/tasks/${taskId}`, branchTip);
+    } catch {
+      await this.cleanupTmpBranch(w, tmpBranch);
+      return this.handleMergeConflict(w);
+    }
+
+    await this.cleanupTmpBranch(w, tmpBranch);
+    await this.resetWorktree(w);
+    return { merged: true };
+  }
+
+  private async cleanupTmpBranch(w: WorkerInfo, tmpBranch: string): Promise<void> {
+    await this.gitIn(w.path, "checkout", w.branch).catch(() => {});
+    await this.git("branch", "-D", tmpBranch).catch(() => {});
+  }
+
+  private async handleMergeConflict(w: WorkerInfo): Promise<{ merged: boolean; conflictFiles?: string[] }> {
+    let conflictFiles: string[] = [];
+    try {
+      const { stdout } = await this.gitIn(w.path, "diff", "--name-only", "--diff-filter=U");
+      conflictFiles = stdout.trim().split("\n").filter(Boolean);
+    } catch {}
+
+    log("warn", "[pool] merge conflict, aborting", { branch: w.branch });
+    await this.gitIn(w.path, "merge", "--abort").catch(() => {});
+    await this.gitIn(w.path, "checkout", w.branch).catch(() => {});
+    return { merged: false, conflictFiles };
   }
 
   get available(): number {

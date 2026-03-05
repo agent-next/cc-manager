@@ -3,6 +3,14 @@ export type TaskPriority = "urgent" | "high" | "normal" | "low";
 /** Built-in agent types with known output parsing. Any string is accepted for generic CLI agents. */
 export type AgentType = "claude" | "claude-sdk" | "codex";
 
+export interface ReviewResult {
+  approve: boolean;
+  score: number;
+  issues: string[];
+  suggestions: string[];
+  reviewAgent?: string;
+}
+
 export interface Task {
   id: string;
   prompt: string;
@@ -28,6 +36,7 @@ export interface Task {
   webhookUrl?: string;
   summary?: string;
   agent?: string;
+  review?: ReviewResult;
 }
 
 export interface TaskEvent {

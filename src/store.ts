@@ -82,6 +82,12 @@ export class Store {
     } catch {
       // Column already exists — safe to ignore
     }
+    // Add review column to persist cross-agent review results
+    try {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN review TEXT");
+    } catch {
+      // Column already exists — safe to ignore
+    }
     // Indexes for common query patterns
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
@@ -115,6 +121,7 @@ export class Store {
       JSON.stringify(task.tags ?? []),
       task.dependsOn ?? null, task.webhookUrl ?? null, task.summary ?? null,
       task.agent ?? "claude",
+      JSON.stringify(task.review ?? null),
     ];
   }
 
@@ -126,8 +133,8 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary, agent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent, review)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(...params);
     if (insertResult.changes === 0) {
       // Row already exists — update it (params[0] is id, rest are fields; append id at end for WHERE)
@@ -136,7 +143,7 @@ export class Store {
           prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
           started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
           token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
-          priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+          priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?, review=?
         WHERE id=?
       `).run(...params.slice(1), task.id);
     }
@@ -153,15 +160,15 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary, agent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent, review)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const updateStmt = this.db.prepare(`
       UPDATE tasks SET
         prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
         started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
         token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
-        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?, review=?
       WHERE id=?
     `);
     const runAll = this.db.transaction((batch: Task[]) => {
@@ -191,15 +198,15 @@ export class Store {
       (id, prompt, status, worktree, output, error, events, created_at,
        started_at, completed_at, timeout, max_budget, cost_usd,
        token_input, token_output, duration_ms, retry_count, max_retries, priority, tags,
-       depends_on, webhook_url, summary, agent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       depends_on, webhook_url, summary, agent, review)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const updateStmt = this.db.prepare(`
       UPDATE tasks SET
         prompt=?, status=?, worktree=?, output=?, error=?, events=?, created_at=?,
         started_at=?, completed_at=?, timeout=?, max_budget=?, cost_usd=?,
         token_input=?, token_output=?, duration_ms=?, retry_count=?, max_retries=?,
-        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?
+        priority=?, tags=?, depends_on=?, webhook_url=?, summary=?, agent=?, review=?
       WHERE id=?
     `);
     this.transaction(() => {
@@ -243,6 +250,7 @@ export class Store {
       webhookUrl:  { col: "webhook_url" },
       summary:     { col: "summary" },
       agent:       { col: "agent" },
+      review:      { col: "review",     serialize: (v) => JSON.stringify(v) },
     };
 
     const setClauses: string[] = [];
@@ -400,6 +408,8 @@ export class Store {
       webhookUrl: row.webhook_url ?? undefined,
       summary: row.summary ?? undefined,
       agent: row.agent ?? "claude",
+      // ?? undefined converts null (from JSON.parse("null")) back to undefined
+      review: this.safeJsonParse(row.review, undefined) ?? undefined,
     };
   }
 

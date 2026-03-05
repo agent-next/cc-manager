@@ -579,6 +579,50 @@ describe("Store", () => {
     });
   });
 
+  // ── review persistence ─────────────────────────────────────────────────────
+
+  describe("review persistence", () => {
+    it("save() and get() round-trip review field", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        const review = { approve: true, score: 85, issues: [], suggestions: ["clean"] };
+        const task = makeTask({ id: "rev-1", review });
+        store.save(task);
+        const got = store.get("rev-1");
+        assert.ok(got !== null);
+        assert.deepStrictEqual(got.review, review);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("task without review returns undefined after load", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        const task = makeTask({ id: "rev-2" });
+        store.save(task);
+        const got = store.get("rev-2");
+        assert.ok(got !== null);
+        assert.strictEqual(got.review, undefined);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("update() can set review field", () => {
+      const { store, cleanup } = makeTempStore();
+      try {
+        store.save(makeTask({ id: "rev-3" }));
+        const review = { approve: false, score: 40, issues: ["bug"], suggestions: [] };
+        const updated = store.update("rev-3", { review });
+        assert.ok(updated !== null);
+        assert.deepStrictEqual(updated.review, review);
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
   // ── close ───────────────────────────────────────────────────────────────────
 
   describe("close", () => {

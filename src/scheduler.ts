@@ -472,7 +472,7 @@ export class Scheduler {
       await this.runner.run(task, workerPath, this.onEvent);
 
       const shouldMerge = task.status === "success";
-      const mergeResult = await this.pool.release(workerName, shouldMerge);
+      const mergeResult = await this.pool.release(workerName, shouldMerge, task.id);
 
       if (shouldMerge && !mergeResult.merged) {
         const fileList = mergeResult.conflictFiles?.length
