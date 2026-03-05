@@ -94,7 +94,8 @@ export class Pipeline extends EventEmitter {
     if (configOverrides) {
       const schema: Record<string, "number" | "boolean"> = {
         maxIterations: "number", metaTaskTimeout: "number",
-        codeTaskTimeout: "number", codeTaskBudget: "number", autoApprove: "boolean",
+        codeTaskTimeout: "number", codeTaskBudget: "number",
+        totalBudget: "number", autoApprove: "boolean",
       };
       for (const [k, t] of Object.entries(schema)) {
         const v = configOverrides[k];
@@ -337,13 +338,14 @@ export class Pipeline extends EventEmitter {
       (v): v is DecomposeOutput => Array.isArray((v as DecomposeOutput)?.waves),
     );
 
+    const validated = validateWaves(output);
     const pipelineDir = join(this.repoPath, ".cc-pipeline");
-    writeFileSync(join(pipelineDir, "tasks.json"), JSON.stringify(output, null, 2));
-    this._lastDecompose = output;
+    writeFileSync(join(pipelineDir, "tasks.json"), JSON.stringify(validated, null, 2));
+    this._lastDecompose = validated;
 
     this.pipelineStore.updateStage(run.id, "execute");
     run.stage = "execute";
-    this.broadcast({ type: "pipeline:decomposed", runId: run.id, waves: output.waves.length, totalTasks: output.totalTasks });
+    this.broadcast({ type: "pipeline:decomposed", runId: run.id, waves: validated.waves.length, totalTasks: validated.totalTasks });
   }
 
   private async doExecute(run: PipelineRun): Promise<void> {
@@ -451,8 +453,30 @@ export class Pipeline extends EventEmitter {
       this.broadcast({ type: "pipeline:verified", runId: run.id, verdict: "pass" });
     } else {
       run.iteration++;
-      if (run.iteration >= run.maxIterations) {
-        run.error = `Verification failed after ${run.maxIterations} iterations: ${output.errors.join("; ")}`;
+      const cfg = this.cfg(run.id);
+
+      // Dead-loop detection: same errors as last verify → agent can't fix this
+      const prevErrors = run.verifyResults && run.verifyResults.length >= 2
+        ? run.verifyResults[run.verifyResults.length - 2]?.errors
+        : undefined;
+      const sameErrors = prevErrors && JSON.stringify(prevErrors) === JSON.stringify(output.errors);
+
+      // Budget check: estimate total spent from completed tasks
+      let totalSpent = 0;
+      for (const taskId of run.taskIds) {
+        const t = this.scheduler.getTask(taskId);
+        if (t?.costUsd) totalSpent += t.costUsd;
+      }
+      const budgetExhausted = cfg.totalBudget > 0 && totalSpent + cfg.codeTaskBudget > cfg.totalBudget;
+
+      // Hard cap as safety valve
+      const iterationCap = run.iteration >= cfg.maxIterations;
+
+      if (sameErrors || budgetExhausted || iterationCap) {
+        const reason = sameErrors ? "same errors repeated (dead loop)"
+          : budgetExhausted ? `budget exhausted ($${totalSpent.toFixed(2)} spent of $${cfg.totalBudget})`
+          : `max iterations reached (${cfg.maxIterations})`;
+        run.error = `Verification failed: ${reason}. Errors: ${output.errors.join("; ")}`;
         this.pipelineStore.updateStage(run.id, "failed", { error: run.error, iteration: run.iteration });
         run.stage = "failed";
         this.broadcast({ type: "pipeline:failed", runId: run.id, error: run.error });
@@ -463,7 +487,7 @@ export class Pipeline extends EventEmitter {
         writeFileSync(join(pipelineDir, "tasks.json"), JSON.stringify(this._lastDecompose, null, 2));
         this.pipelineStore.updateStage(run.id, "execute", { iteration: run.iteration });
         run.stage = "execute";
-        this.broadcast({ type: "pipeline:retry", runId: run.id, iteration: run.iteration, errors: output.errors });
+        this.broadcast({ type: "pipeline:retry", runId: run.id, iteration: run.iteration, errors: output.errors, totalSpent });
       }
     }
   }
@@ -522,6 +546,90 @@ export class Pipeline extends EventEmitter {
 
     return results;
   }
+}
+
+/** Extract file paths mentioned in a task prompt (e.g., src/foo.ts, lib/bar.js) */
+export function extractFilePaths(prompt: string): string[] {
+  const matches = prompt.match(/(?:^|\s|['"`])((?:[\w.-]+\/)*[\w.-]+\.\w{1,4})(?=[\s,'"`):;]|$)/gm);
+  if (!matches) return [];
+  const paths = new Set<string>();
+  for (const m of matches) {
+    const p = m.trim().replace(/^['"`]|['"`]$/g, "");
+    // Skip common false positives
+    if (/^\d/.test(p) || /^(http|https|ftp):/.test(p)) continue;
+    if (/\.(md|txt|json|yaml|yml|toml|lock|log)$/.test(p)) continue; // config/docs not conflicts
+    paths.add(p);
+  }
+  return [...paths];
+}
+
+/** Validate wave decomposition: move tasks with file conflicts to later waves */
+export function validateWaves(decomposed: DecomposeOutput): DecomposeOutput {
+  const newWaves: { waveIndex: number; tasks: string[] }[] = [];
+  let nextWaveOverflow: string[] = [];
+
+  for (const wave of decomposed.waves) {
+    const currentTasks = [...wave.tasks, ...nextWaveOverflow];
+    nextWaveOverflow = [];
+    const keep: string[] = [];
+    const usedFiles = new Map<string, number>(); // file → first task index in keep
+
+    for (const task of currentTasks) {
+      const files = extractFilePaths(task);
+      let hasConflict = false;
+      for (const f of files) {
+        if (usedFiles.has(f)) {
+          hasConflict = true;
+          break;
+        }
+      }
+      if (hasConflict) {
+        nextWaveOverflow.push(task);
+      } else {
+        for (const f of files) usedFiles.set(f, keep.length);
+        keep.push(task);
+      }
+    }
+
+    if (keep.length > 0) {
+      newWaves.push({ waveIndex: newWaves.length, tasks: keep });
+    }
+  }
+
+  // Flush remaining overflow tasks into additional waves
+  while (nextWaveOverflow.length > 0) {
+    const batch = nextWaveOverflow;
+    nextWaveOverflow = [];
+    const keep: string[] = [];
+    const usedFiles = new Map<string, number>();
+
+    for (const task of batch) {
+      const files = extractFilePaths(task);
+      let hasConflict = false;
+      for (const f of files) {
+        if (usedFiles.has(f)) { hasConflict = true; break; }
+      }
+      if (hasConflict) {
+        nextWaveOverflow.push(task);
+      } else {
+        for (const f of files) usedFiles.set(f, keep.length);
+        keep.push(task);
+      }
+    }
+
+    if (keep.length > 0) {
+      newWaves.push({ waveIndex: newWaves.length, tasks: keep });
+    } else {
+      // All remaining tasks conflict with each other — serialize them
+      for (const task of batch) {
+        newWaves.push({ waveIndex: newWaves.length, tasks: [task] });
+      }
+      break;
+    }
+  }
+
+  const totalTasks = newWaves.reduce((sum, w) => sum + w.tasks.length, 0);
+  return { waves: newWaves, totalTasks };
 }
 
 function parseJsonFromOutput<T>(output: string, validate: (v: unknown) => v is T): T {

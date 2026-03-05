@@ -39,6 +39,7 @@ export interface PipelineConfig {
   metaTaskTimeout: number;
   codeTaskTimeout: number;
   codeTaskBudget: number;
+  totalBudget: number;
   autoApprove: boolean;
 }
 
@@ -47,5 +48,6 @@ export const defaultPipelineConfig: PipelineConfig = {
   metaTaskTimeout: 600,
   codeTaskTimeout: 600,
   codeTaskBudget: 5,
+  totalBudget: 50,
   autoApprove: false,
 };

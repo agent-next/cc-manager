@@ -4,7 +4,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Pipeline } from "../pipeline.js";
+import { Pipeline, extractFilePaths, validateWaves } from "../pipeline.js";
 import { PipelineStore } from "../pipeline-store.js";
 import { createTask } from "../types.js";
 import type { Task } from "../types.js";
@@ -637,7 +637,7 @@ describe("Pipeline", () => {
       const saved = store.get(run.id);
       assert.ok(saved !== null);
       assert.strictEqual(saved.stage, "failed");
-      assert.ok(saved.error!.includes("Verification failed after 2 iterations"));
+      assert.ok(saved.error!.includes("Verification failed"));
       assert.ok(saved.error!.includes("persistent error"));
       assert.ok(events.some((e) => e.type === "pipeline:failed"));
 
@@ -946,5 +946,175 @@ describe("Pipeline", () => {
     } finally {
       cleanup();
     }
+  });
+
+  it("dead-loop detection: same errors twice → pipeline fails", async () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      const store = new PipelineStore(db);
+      const events: Record<string, unknown>[] = [];
+      let verifyCount = 0;
+
+      // ResearchPlan succeeds, Decompose returns 1 task, Verify always returns same error
+      const runner = makeRunner((task) => {
+        if (task.prompt.includes("architect")) {
+          task.status = "success";
+          task.output = "planned";
+          return task;
+        }
+        if (task.prompt.includes("decomposition")) {
+          task.status = "success";
+          task.output = JSON.stringify({
+            waves: [{ waveIndex: 0, tasks: ["Fix src/app.ts"] }],
+            totalTasks: 1,
+          });
+          return task;
+        }
+        if (task.prompt.includes("verification")) {
+          verifyCount++;
+          task.status = "success";
+          task.output = JSON.stringify({
+            tscClean: false,
+            testsPass: false,
+            errors: ["src/app.ts:1 - same error every time"],
+            verdict: "fail",
+          });
+          return task;
+        }
+        task.status = "success";
+        return task;
+      });
+
+      const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "deadloop-"));
+      fs.mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+      fs.mkdirSync(path.join(repoDir, ".cc-pipeline"), { recursive: true });
+
+      const pipeline = new Pipeline(
+        runner,
+        makeScheduler(),
+        store,
+        repoDir,
+        (ev) => events.push(ev),
+        makeConfig({ maxIterations: 10 }), // high cap to test dead-loop kicks in first
+      );
+
+      const run = pipeline.start("test dead loop");
+      await new Promise((r) => setTimeout(r, 1500));
+
+      const saved = store.get(run.id);
+      assert.ok(saved !== null);
+      assert.strictEqual(saved.stage, "failed");
+      assert.ok(saved.error!.includes("same errors repeated"));
+
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractFilePaths tests
+// ---------------------------------------------------------------------------
+
+describe("extractFilePaths", () => {
+  it("extracts simple file paths from a prompt", () => {
+    const paths = extractFilePaths("Create src/types.ts and modify src/index.ts");
+    assert.ok(paths.includes("src/types.ts"));
+    assert.ok(paths.includes("src/index.ts"));
+  });
+
+  it("ignores non-code files (md, json, yaml)", () => {
+    const paths = extractFilePaths("Update README.md and package.json and src/app.ts");
+    assert.ok(!paths.includes("README.md"));
+    assert.ok(!paths.includes("package.json"));
+    assert.ok(paths.includes("src/app.ts"));
+  });
+
+  it("extracts nested paths", () => {
+    const paths = extractFilePaths("Fix src/lib/utils/helpers.ts");
+    assert.ok(paths.includes("src/lib/utils/helpers.ts"));
+  });
+
+  it("returns empty for no file paths", () => {
+    const paths = extractFilePaths("Just do something generic");
+    assert.deepStrictEqual(paths, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateWaves tests
+// ---------------------------------------------------------------------------
+
+describe("validateWaves", () => {
+  it("no conflicts → waves unchanged", () => {
+    const input = {
+      waves: [
+        { waveIndex: 0, tasks: ["Create src/a.ts", "Create src/b.ts"] },
+      ],
+      totalTasks: 2,
+    };
+    const result = validateWaves(input);
+    assert.strictEqual(result.waves.length, 1);
+    assert.strictEqual(result.waves[0].tasks.length, 2);
+  });
+
+  it("file conflict → task moved to next wave", () => {
+    const input = {
+      waves: [
+        { waveIndex: 0, tasks: ["Modify src/app.ts to add feature A", "Modify src/app.ts to add feature B"] },
+      ],
+      totalTasks: 2,
+    };
+    const result = validateWaves(input);
+    assert.strictEqual(result.waves.length, 2);
+    assert.strictEqual(result.waves[0].tasks.length, 1);
+    assert.strictEqual(result.waves[1].tasks.length, 1);
+  });
+
+  it("three-way conflict → serialized into 3 waves", () => {
+    const input = {
+      waves: [
+        { waveIndex: 0, tasks: [
+          "Add function foo to src/lib.ts",
+          "Add function bar to src/lib.ts",
+          "Add function baz to src/lib.ts",
+        ]},
+      ],
+      totalTasks: 3,
+    };
+    const result = validateWaves(input);
+    assert.strictEqual(result.waves.length, 3);
+    assert.strictEqual(result.totalTasks, 3);
+  });
+
+  it("mixed: some conflict some not → correct splitting", () => {
+    const input = {
+      waves: [
+        { waveIndex: 0, tasks: [
+          "Create src/types.ts with interfaces",
+          "Create src/utils.ts with helpers",
+          "Modify src/types.ts to add enums",
+        ]},
+      ],
+      totalTasks: 3,
+    };
+    const result = validateWaves(input);
+    assert.strictEqual(result.waves[0].tasks.length, 2); // types.ts and utils.ts
+    assert.strictEqual(result.waves[1].tasks.length, 1); // second types.ts task
+  });
+
+  it("preserves wave ordering across existing waves", () => {
+    const input = {
+      waves: [
+        { waveIndex: 0, tasks: ["Create src/a.ts", "Create src/b.ts"] },
+        { waveIndex: 1, tasks: ["Modify src/a.ts to use b", "Modify src/b.ts to use a"] },
+      ],
+      totalTasks: 4,
+    };
+    const result = validateWaves(input);
+    // No conflicts within waves, so should remain 2 waves
+    assert.strictEqual(result.waves.length, 2);
+    assert.strictEqual(result.totalTasks, 4);
   });
 });

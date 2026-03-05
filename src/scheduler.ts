@@ -140,6 +140,13 @@ export class Scheduler {
     // Ensure the task is tracked in the in-memory map (may only be in store)
     this.tasks.set(task.id, task);
 
+    // Inject previous error into prompt so agent can learn from it
+    const prevError = task.error ?? "";
+    if (prevError) {
+      const errorContext = prevError.length > 500 ? prevError.slice(0, 500) + "..." : prevError;
+      task.prompt = `${task.prompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount + 1})\nError: ${errorContext}\nFix the error above and try again.`;
+    }
+
     task.status = "pending";
     task.error = "";
     task.retryCount += 1;
@@ -530,11 +537,17 @@ export class Scheduler {
       // Retry logic: re-queue failed tasks (not timeout/cancelled) up to maxRetries times
       if (task.status === "failed" && task.retryCount < task.maxRetries) {
         shouldRetry = true;
+        const prevError = task.error ?? "";
         task.retryCount++;
         task.status = "pending";
-        task.error = "";
         task.completedAt = undefined;
-        log("info", "task retrying", { taskId: task.id, attempt: task.retryCount, maxRetries: task.maxRetries });
+        // Inject previous error into prompt so the agent can learn from it
+        if (prevError) {
+          const errorContext = prevError.length > 500 ? prevError.slice(0, 500) + "..." : prevError;
+          task.prompt = `${task.prompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount})\nError: ${errorContext}\nFix the error above and try again.`;
+        }
+        task.error = "";
+        log("info", "task retrying with error context", { taskId: task.id, attempt: task.retryCount, maxRetries: task.maxRetries });
       }
       this.activeWorkers.delete(workerName);
       this.triggerDispatch(); // wake the loop now that a worker slot is free

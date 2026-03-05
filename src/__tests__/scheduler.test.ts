@@ -240,6 +240,30 @@ describe("Scheduler", () => {
       assert.strictEqual(task.retryCount, 2);
     });
 
+    it("injects previous error into prompt on requeue", () => {
+      const s = new Scheduler(makePool(), makeRunner(), makeStore());
+      const task = s.submit("fix the bug");
+      task.status = "failed";
+      task.error = "TypeError: cannot read property 'foo' of undefined";
+      const requeued = s.requeue(task.id);
+      assert.ok(requeued);
+      assert.ok(requeued!.prompt.includes("Previous Attempt Failed"));
+      assert.ok(requeued!.prompt.includes("TypeError: cannot read property"));
+      assert.strictEqual(requeued!.error, ""); // error field cleared
+    });
+
+    it("truncates long error to 500 chars on requeue", () => {
+      const s = new Scheduler(makePool(), makeRunner(), makeStore());
+      const task = s.submit("fix it");
+      task.status = "failed";
+      task.error = "x".repeat(1000);
+      const requeued = s.requeue(task.id);
+      assert.ok(requeued);
+      // Error should be truncated: 500 chars + "..."
+      assert.ok(requeued!.prompt.includes("x".repeat(500) + "..."));
+      assert.ok(!requeued!.prompt.includes("x".repeat(501)));
+    });
+
     it("adds requeued task back to the queue", () => {
       const s = new Scheduler(makePool(), makeRunner(), makeStore());
       const task = s.submit("queue me");
