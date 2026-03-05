@@ -4,6 +4,7 @@ import { WorktreePool } from "./worktree-pool.js";
 import { AgentRunner } from "./agent-runner.js";
 import { Store } from "./store.js";
 import { log } from "./logger.js";
+import { classifyTask } from "./task-classifier.js";
 
 type EventCallback = (event: Record<string, unknown>) => void;
 
@@ -74,12 +75,17 @@ export class Scheduler {
       prompt = prompt.slice(0, 2000);
     }
     const task = createTask(prompt, opts);
+    // Auto-classify: apply model/timeout/budget only when caller didn't specify
+    const classification = classifyTask(prompt);
+    if (opts?.timeout === undefined) task.timeout = classification.timeout;
+    if (opts?.maxBudget === undefined) task.maxBudget = classification.maxBudget;
+    if (opts?.agent === undefined) task.model = classification.model;
     this.validateTask(task);
     this.tasks.set(task.id, task);
     this.queue.push(task);
     this.store.save(task);
-    this.onEvent?.({ type: "task_queued", taskId: task.id, queueSize: this.queue.length });
-    log("info", "task queued", { taskId: task.id, queueSize: this.queue.length });
+    this.onEvent?.({ type: "task_queued", taskId: task.id, queueSize: this.queue.length, category: classification.category });
+    log("info", "task queued", { taskId: task.id, category: classification.category, queueSize: this.queue.length });
     this.triggerDispatch();
     return task;
   }
@@ -547,7 +553,10 @@ export class Scheduler {
           task.prompt = `${task.prompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount})\nError: ${errorContext}\nFix the error above and try again.`;
         }
         task.error = "";
-        log("info", "task retrying with error context", { taskId: task.id, attempt: task.retryCount, maxRetries: task.maxRetries });
+        // Swap agent on retry for better chance of success
+        const prevAgent = task.agent ?? "claude";
+        task.agent = AgentRunner.pickFallbackAgent(prevAgent);
+        log("info", "task retrying with error context", { taskId: task.id, attempt: task.retryCount, maxRetries: task.maxRetries, agent: prevAgent, fallback: task.agent });
       }
       this.activeWorkers.delete(workerName);
       this.triggerDispatch(); // wake the loop now that a worker slot is free
