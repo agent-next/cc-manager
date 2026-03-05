@@ -397,7 +397,7 @@ export class AgentRunner {
         options: {
           cwd,
           env,
-          model: task.model ?? this.model,
+          model: task.modelOverride ?? task.model ?? this.model,
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           maxTurns: 50,
@@ -435,7 +435,7 @@ export class AgentRunner {
         "--dangerously-skip-permissions",
         "--output-format", "stream-json",
         "--verbose",
-        "--model", task.model ?? this.model,
+        "--model", task.modelOverride ?? task.model ?? this.model,
       ];
       if (task.maxBudget > 0) {
         args.push("--max-budget-usd", String(task.maxBudget));

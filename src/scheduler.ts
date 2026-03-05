@@ -146,16 +146,17 @@ export class Scheduler {
     // Ensure the task is tracked in the in-memory map (may only be in store)
     this.tasks.set(task.id, task);
 
-    // Inject previous error into prompt so agent can learn from it
+    // Preserve original prompt on first requeue to prevent accumulation
+    if (!task._originalPrompt) task._originalPrompt = task.prompt;
     const prevError = task.error ?? "";
+    task.retryCount += 1;
     if (prevError) {
       const errorContext = prevError.length > 500 ? prevError.slice(0, 500) + "..." : prevError;
-      task.prompt = `${task.prompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount + 1})\nError: ${errorContext}\nFix the error above and try again.`;
+      task.prompt = `${task._originalPrompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount}/${task.maxRetries})\nError: ${errorContext}\nFix the error above and try again.`;
     }
 
     task.status = "pending";
     task.error = "";
-    task.retryCount += 1;
     task.completedAt = undefined;
 
     this.queue.push(task);
@@ -441,19 +442,28 @@ export class Scheduler {
 
       // Dependency check: skip if dependency hasn't completed successfully yet
       if (task.dependsOn) {
-        const depId = Array.isArray(task.dependsOn) ? task.dependsOn[0] : task.dependsOn as string;
-        const dep = this.tasks.get(depId) ?? this.store.get(depId) ?? undefined;
-        if (dep?.status !== "success") {
-          // If dependency is in a terminal failure state (or missing), fail this task
+        const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [task.dependsOn];
+        let allSuccess = true;
+        let failedDepId = "";
+        let failedDepStatus = "";
+
+        for (const depId of deps) {
+          const dep = this.tasks.get(depId) ?? this.store.get(depId) ?? undefined;
           if (!dep || dep.status === "failed" || dep.status === "timeout" || dep.status === "cancelled") {
             task.status = "failed";
-            task.error = `dependency ${task.dependsOn} is ${dep?.status ?? "missing"}`;
+            task.error = `dependency ${depId} is ${dep?.status ?? "missing"}`;
             task.completedAt = new Date().toISOString();
             this.store.save(task);
             this.onEvent?.({ type: "task_final", taskId: task.id, status: task.status });
-            continue;
+            failedDepId = depId;
+            break;
           }
-          // Still pending/running — re-queue and wait
+          if (dep.status !== "success") {
+            allSuccess = false;
+          }
+        }
+        if (failedDepId) continue;
+        if (!allSuccess) {
           log("info", "task waiting on dependency", { taskId: task.id, dependsOn: task.dependsOn });
           this.queue.push(task);
           await this.waitForDispatch(1_000);
@@ -514,6 +524,16 @@ export class Scheduler {
       }
       const mergeResult = await this.pool.release(workerName, shouldMerge, task.id);
 
+      // After successful merge, rebase all other active workers onto new main
+      if (shouldMerge && mergeResult.merged) {
+        const activeWorkers = this.pool.getActiveWorkers(workerName);
+        for (const otherWorker of activeWorkers) {
+          await this.pool.rebaseOnMain(otherWorker).catch((err) => {
+            log("warn", "rebase failed for active worker", { worker: otherWorker, err: String(err) });
+          });
+        }
+      }
+
       if (shouldMerge && !mergeResult.merged) {
         const fileList = mergeResult.conflictFiles?.length
           ? `: ${mergeResult.conflictFiles.join(", ")}`
@@ -548,12 +568,18 @@ export class Scheduler {
         task.retryCount++;
         task.status = "pending";
         task.completedAt = undefined;
-        // Inject previous error into prompt so the agent can learn from it
+        // Store original prompt on first retry to prevent accumulation
+        if (!task._originalPrompt) task._originalPrompt = task.prompt;
+        // Rebuild from original prompt + latest error (no accumulation)
         if (prevError) {
           const errorContext = prevError.length > 500 ? prevError.slice(0, 500) + "..." : prevError;
-          task.prompt = `${task.prompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount})\nError: ${errorContext}\nFix the error above and try again.`;
+          task.prompt = `${task._originalPrompt}\n\n---\n## Previous Attempt Failed (attempt ${task.retryCount}/${task.maxRetries})\nError: ${errorContext}\nFix the error above and try again.`;
         }
-        task.error = "";
+        // Model escalation: retry 2+ uses Opus
+        if (task.retryCount >= 2) {
+          task.modelOverride = "claude-opus-4-6";
+          log("info", "escalating model for retry", { taskId: task.id, model: "claude-opus-4-6" });
+        }
         // Swap agent on retry for better chance of success
         const prevAgent = task.agent ?? "claude";
         task.agent = AgentRunner.pickFallbackAgent(prevAgent);

@@ -37,6 +37,7 @@ export interface Task {
   summary?: string;
   agent?: string;
   model?: string;
+  modelOverride?: string;
   review?: ReviewResult;
   _originalPrompt?: string;
 }
