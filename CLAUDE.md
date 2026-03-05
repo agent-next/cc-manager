@@ -13,6 +13,10 @@ Multi-agent orchestrator that runs parallel Claude Code agents in git worktrees.
 - **src/worktree-pool.ts** — Git worktree lifecycle, parallel init, merge
 - **src/store.ts** — SQLite persistence (better-sqlite3, WAL mode)
 - **src/types.ts** — Shared TypeScript types
+- **src/pipeline.ts** — 5-stage autonomous pipeline (research→decompose→execute→verify→done)
+- **src/pipeline-types.ts** — Pipeline type definitions
+- **src/pipeline-store.ts** — Pipeline run persistence
+- **src/task-classifier.ts** — Task routing (quick/standard/deep → model/agent/contextProfile)
 - **src/logger.ts** — Structured JSON logger
 - **src/web/index.html** — Dashboard (vanilla HTML/JS, dark theme)
 
@@ -30,7 +34,7 @@ node dist/index.js --repo /path/to/repo --workers 5 --port 8080
 ```
 
 ```bash
-# Run tests (282 tests across 8 suites)
+# Run tests (372 tests across 10 suites)
 node --import tsx --test src/__tests__/*.test.ts
 ```
 
@@ -44,6 +48,14 @@ node --import tsx --test src/__tests__/*.test.ts
 
 ## Agent Flywheel Strategy
 The cc-manager improves itself by running agents against its own codebase.
+
+### Current Status: NOT WORKING (v0.1.7)
+Two self-hosting runs (v0.1.5, v0.1.6) achieved only 43-50% commit rate. All "successful" runs required manual fixes. The flywheel loop does not yet produce reliable, mergeable code autonomously.
+
+**Root causes identified**:
+- Agents exit 0 without committing (fixed in v0.1.7: F1 empty commit detection)
+- Complex files (scheduler.ts 618 LOC) always fail multi-point integration
+- System prompt commit instruction too weak (fixed in v0.1.7: F2 CRITICAL warning)
 
 ### Proven Best Practices
 - **240s timeout** — sweet spot (120s = 80% failure, 180s = occasional timeout)
@@ -146,7 +158,7 @@ pending → running → success (branch merged to main)
 
 ## Repository
 - **GitHub**: `agent-next/cc-manager` (private)
-- **Version**: v0.1.0
+- **Version**: v0.1.7
 
 ## Security Notes
 - **No authentication**: cc-manager has no auth. It is a local dev tool — do NOT expose to the public internet.

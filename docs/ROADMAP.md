@@ -2,31 +2,36 @@
 
 > **Updated**: 2026-03-05 | **Status**: Active
 
-## Current State (v0.1.0 + patches)
+## Current State (v0.1.7)
 
 | Metric | Value |
 |--------|-------|
-| Core modules | 9 (types, logger, store, worktree-pool, agent-runner, scheduler, server, cli, index) |
-| LOC | 3,738 |
-| Tests | 306 pass, 0 fail |
-| Features shipped | Priority queue, worktree isolation, SQLite/WAL persistence, SSE streaming, cross-agent review, squash merge, cost tracking |
+| Core modules | 13 (types, logger, store, worktree-pool, agent-runner, scheduler, server, cli, index, pipeline, pipeline-types, pipeline-store, task-classifier) |
+| LOC | 4,924 |
+| Tests | 372 pass, 0 fail |
+| Features shipped | Priority queue, worktree isolation, SQLite/WAL, SSE, cross-agent review, squash merge, cost tracking, 5-stage pipeline, DAG dispatch, staged rebase, task classifier, model escalation, GPT-5.4 routing, session resume, empty commit detection |
 | Agent types | 4 (claude, claude-sdk, codex, generic) |
 | API endpoints | 20+ |
+| Self-hosting commit rate | 43% (NOT WORKING — requires manual fixes) |
 
 ### What works well
 - Worktree pool (create/acquire/release/merge with conflict detection)
-- Event-driven scheduler with priority queue and retry
+- Event-driven scheduler with priority queue, retry, and model escalation
 - Cross-agent diff review before merge (Claude codes → Codex reviews)
-- Squash merge with review persisted to SQLite
+- Squash merge with review persisted to SQLite + staged rebase
 - Real-time SSE dashboard + CLI client
+- 5-stage autonomous pipeline (research→decompose→execute→verify)
+- Dependency DAG dispatch with wave planning
+- Task classifier routing (quick/standard/deep → model/agent/contextProfile)
+- Empty commit detection (v0.1.7) — no more silent success
 
-### What's missing (core gaps)
-1. **Wave planning** — all tasks dispatch immediately, no dependency awareness
-2. **Staged merging** — no merge-as-you-go, no rebase of active worktrees
-3. **CI feedback loop** — TSC/test failures don't auto-route back to agent
-4. **Failure diagnosis** — no error parsing, no targeted retry prompts
+### What's NOT working (honest assessment)
+1. **Flywheel loop** — 2 pipeline runs, 43-50% commit rate, 0% unattended merge
+2. **Complex file integration** — scheduler.ts (618 LOC) tasks always fail (0/4 across 2 runs)
+3. **Failure diagnosis** — only basic error injection, no structured parsing
+4. **Agent self-evolution** — Pillar 4 not started
 
-These 4 gaps cause the **isolation paradox**: parallel agents can't see each other's types, leading to cascade TSC failures. This is the #1 blocker for high auto-merge rates.
+The flywheel is the #1 blocker. Until agents can reliably produce mergeable code, the self-hosting loop is aspirational.
 
 ---
 

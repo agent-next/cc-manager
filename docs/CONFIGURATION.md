@@ -110,10 +110,10 @@ Claude model identifier passed to every agent session.
 |---|---|
 | **Default** | `claude-sonnet-4-6` |
 | **Type** | string |
-| **Valid values** | Any supported Claude model ID (e.g. `claude-opus-4-5`, `claude-sonnet-4-6`) |
+| **Valid values** | Any supported Claude model ID (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`) |
 
 ```bash
-cc-manager --repo . --model claude-opus-4-5
+cc-manager --repo . --model claude-opus-4-6
 ```
 
 ---
