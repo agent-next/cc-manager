@@ -101,6 +101,14 @@ export class AgentRunner {
   }
 
   /**
+   * Returns a fallback agent different from the current one.
+   * If current is "codex", returns "claude"; otherwise returns "codex".
+   */
+  static pickFallbackAgent(current: string): string {
+    return current === "codex" ? "claude" : "codex";
+  }
+
+  /**
    * Spawn a cross-agent to review a git diff. Returns a structured ReviewResult.
    * Falls back to the heuristic reviewDiff() if the agent fails or times out.
    */
@@ -389,7 +397,7 @@ export class AgentRunner {
         options: {
           cwd,
           env,
-          model: this.model,
+          model: task.model ?? this.model,
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           maxTurns: 50,
@@ -427,7 +435,7 @@ export class AgentRunner {
         "--dangerously-skip-permissions",
         "--output-format", "stream-json",
         "--verbose",
-        "--model", this.model,
+        "--model", task.model ?? this.model,
       ];
       if (task.maxBudget > 0) {
         args.push("--max-budget-usd", String(task.maxBudget));
