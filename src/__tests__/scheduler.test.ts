@@ -21,6 +21,7 @@ function makeRunner(): AgentRunner {
   return {
     run: async (task: Task) => { task.status = "success"; task.durationMs = 100; return task; },
     getRunningTasks: () => [],
+    reviewDiffWithAgent: async () => ({ approve: true, score: 80, issues: [], suggestions: [] }),
   } as unknown as AgentRunner;
 }
 
@@ -843,6 +844,210 @@ describe("Scheduler", () => {
       task.status = "failed";
       const result = s.requeue(task.id);
       assert.ok(result);
+    });
+  });
+
+  // ─── 11. Cross-agent review gate ───
+
+  describe("cross-agent review gate", () => {
+    it("review gate blocks merge when review rejects", async () => {
+      let mergeCalledWith = false;
+      const pool = {
+        ...makePool(),
+        release: async (_name: string, merge: boolean) => {
+          mergeCalledWith = merge;
+          return { merged: merge };
+        },
+      } as unknown as WorktreePool;
+
+      const runner = {
+        run: async (task: Task) => {
+          task.status = "success";
+          task.durationMs = 100;
+          // Simulate agent creating a git diff event
+          task.events.push({
+            type: "git_diff",
+            timestamp: new Date().toISOString(),
+            data: { diff: "diff --git a/foo.ts\n+console.log('debug');" },
+          });
+          return task;
+        },
+        getRunningTasks: () => [],
+        reviewDiffWithAgent: async () => ({
+          approve: false,
+          score: 25,
+          issues: ["console.log found"],
+          suggestions: [],
+        }),
+      } as unknown as AgentRunner;
+
+      const events: Record<string, unknown>[] = [];
+      const s = new Scheduler(pool, runner, makeStore(), (ev) => events.push(ev));
+
+      // Manually invoke executeAndRelease
+      const task = s.submit("test review gate");
+      const exec = (s as any).executeAndRelease.bind(s);
+      await exec(task, "w0", "/tmp/w0");
+
+      // Task should still be "success" (review doesn't change status)
+      assert.strictEqual(task.status, "success");
+      // But merge should have been blocked
+      assert.strictEqual(mergeCalledWith, false);
+      // Review should be attached to task
+      assert.ok(task.review);
+      assert.strictEqual(task.review!.approve, false);
+      assert.strictEqual(task.review!.score, 25);
+      // Error should explain why merge was blocked
+      assert.ok(task.error.includes("review rejected"), "error should explain rejection");
+      // Should have emitted review_started and review_rejected events
+      assert.ok(events.some(e => e.type === "review_started"), "should emit review_started");
+      assert.ok(events.some(e => e.type === "review_rejected"), "should emit review_rejected");
+    });
+
+    it("review gate allows merge when review approves", async () => {
+      let mergeCalledWith = false;
+      const pool = {
+        ...makePool(),
+        release: async (_name: string, merge: boolean) => {
+          mergeCalledWith = merge;
+          return { merged: true };
+        },
+      } as unknown as WorktreePool;
+
+      const runner = {
+        run: async (task: Task) => {
+          task.status = "success";
+          task.durationMs = 100;
+          task.events.push({
+            type: "git_diff",
+            timestamp: new Date().toISOString(),
+            data: { diff: "diff --git a/foo.ts\n+const x = 1;" },
+          });
+          return task;
+        },
+        getRunningTasks: () => [],
+        reviewDiffWithAgent: async () => ({
+          approve: true,
+          score: 85,
+          issues: [],
+          suggestions: ["looks clean"],
+        }),
+      } as unknown as AgentRunner;
+
+      const events: Record<string, unknown>[] = [];
+      const s = new Scheduler(pool, runner, makeStore(), (ev) => events.push(ev));
+
+      const task = s.submit("test approve");
+      const exec = (s as any).executeAndRelease.bind(s);
+      await exec(task, "w0", "/tmp/w0");
+
+      assert.strictEqual(task.status, "success");
+      assert.strictEqual(mergeCalledWith, true);
+      assert.ok(task.review);
+      assert.strictEqual(task.review!.approve, true);
+      assert.ok(events.some(e => e.type === "review_started"), "should emit review_started");
+      assert.ok(events.some(e => e.type === "review_approved"), "should emit review_approved");
+    });
+
+    it("skips review when task has no diff", async () => {
+      let mergeCalledWith = false;
+      const pool = {
+        ...makePool(),
+        release: async (_name: string, merge: boolean) => {
+          mergeCalledWith = merge;
+          return { merged: true };
+        },
+      } as unknown as WorktreePool;
+
+      const runner = {
+        run: async (task: Task) => {
+          task.status = "success";
+          task.durationMs = 100;
+          // No git_diff event
+          return task;
+        },
+        getRunningTasks: () => [],
+        reviewDiffWithAgent: async () => { throw new Error("should not be called"); },
+      } as unknown as AgentRunner;
+
+      const s = new Scheduler(pool, runner, makeStore());
+
+      const task = s.submit("no diff task");
+      const exec = (s as any).executeAndRelease.bind(s);
+      await exec(task, "w0", "/tmp/w0");
+
+      // Should merge without review since there's no diff
+      assert.strictEqual(mergeCalledWith, true);
+      assert.strictEqual(task.review, undefined);
+    });
+
+    it("skips review when task failed", async () => {
+      let mergeCalledWith = false;
+      const pool = {
+        ...makePool(),
+        release: async (_name: string, merge: boolean) => {
+          mergeCalledWith = merge;
+          return { merged: false };
+        },
+      } as unknown as WorktreePool;
+
+      const runner = {
+        run: async (task: Task) => {
+          task.status = "failed";
+          task.error = "compilation error";
+          task.durationMs = 50;
+          return task;
+        },
+        getRunningTasks: () => [],
+        reviewDiffWithAgent: async () => { throw new Error("should not be called"); },
+      } as unknown as AgentRunner;
+
+      const s = new Scheduler(pool, runner, makeStore());
+
+      const task = s.submit("failed task");
+      const exec = (s as any).executeAndRelease.bind(s);
+      await exec(task, "w0", "/tmp/w0");
+
+      assert.strictEqual(mergeCalledWith, false);
+      assert.strictEqual(task.review, undefined);
+    });
+
+    it("falls back gracefully when reviewDiffWithAgent throws", async () => {
+      let mergeCalledWith = false;
+      const pool = {
+        ...makePool(),
+        release: async (_name: string, merge: boolean) => {
+          mergeCalledWith = merge;
+          return { merged: false };
+        },
+      } as unknown as WorktreePool;
+
+      const runner = {
+        run: async (task: Task) => {
+          task.status = "success";
+          task.durationMs = 100;
+          task.events.push({
+            type: "git_diff",
+            timestamp: new Date().toISOString(),
+            data: { diff: "diff --git a/foo.ts\n+const x = 1;" },
+          });
+          return task;
+        },
+        getRunningTasks: () => [],
+        reviewDiffWithAgent: async () => { throw new Error("network error"); },
+      } as unknown as AgentRunner;
+
+      const s = new Scheduler(pool, runner, makeStore());
+
+      const task = s.submit("review throws");
+      task.maxRetries = 0; // prevent retry so we can assert final status
+      const exec = (s as any).executeAndRelease.bind(s);
+      await exec(task, "w0", "/tmp/w0");
+
+      // The outer catch should mark the task as failed
+      assert.strictEqual(task.status, "failed");
+      assert.ok(task.error.includes("network error"));
+      assert.strictEqual(mergeCalledWith, false);
     });
   });
 });

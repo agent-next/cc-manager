@@ -471,7 +471,31 @@ export class Scheduler {
       log("info", "task started", { taskId: task.id, worker: workerName });
       await this.runner.run(task, workerPath, this.onEvent);
 
-      const shouldMerge = task.status === "success";
+      // Cross-agent review gate: if the task succeeded, have a different agent review the diff
+      let shouldMerge = task.status === "success";
+      if (shouldMerge) {
+        const diffEvent = task.events.find((e) => e.type === "git_diff");
+        const diff = (diffEvent?.data as { diff?: string } | undefined)?.diff;
+        if (diff) {
+          const taskAgent = task.agent ?? "claude";
+          this.onEvent?.({ type: "review_started", taskId: task.id, reviewAgent: AgentRunner.pickReviewAgent(taskAgent) });
+          const review = await this.runner.reviewDiffWithAgent(diff, taskAgent);
+          task.review = review;
+          if (!review.approve) {
+            shouldMerge = false;
+            task.error = `review rejected (score ${review.score}): ${review.issues.join("; ")}`;
+            log("info", "cross-agent review rejected merge", {
+              taskId: task.id,
+              score: review.score,
+              issues: review.issues,
+            });
+            this.onEvent?.({ type: "review_rejected", taskId: task.id, score: review.score, issues: review.issues });
+          } else {
+            log("info", "cross-agent review approved merge", { taskId: task.id, score: review.score });
+            this.onEvent?.({ type: "review_approved", taskId: task.id, score: review.score });
+          }
+        }
+      }
       const mergeResult = await this.pool.release(workerName, shouldMerge, task.id);
 
       if (shouldMerge && !mergeResult.merged) {
