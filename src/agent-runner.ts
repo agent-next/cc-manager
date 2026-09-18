@@ -255,15 +255,19 @@ export class AgentRunner {
 
     const parts: string[] = [];
 
-    // Inject Development Rules from CLAUDE.md if present
-    try {
-      const claudeMd = readFileSync(`${cwd}/CLAUDE.md`, "utf8");
-      const match = claudeMd.match(/## Development Rules\n([\s\S]*?)(?=\n## |$)/);
-      if (match) {
-        parts.push(match[1].trim());
+    // Inject Development Rules from the first of AGENTS.md, CLAUDE.md that has the section
+    // (CLAUDE.md may be just an `@AGENTS.md` import)
+    for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+      try {
+        const content = readFileSync(`${cwd}/${file}`, "utf8");
+        const match = content.match(/## Development Rules\n([\s\S]*?)(?=\n## |$)/);
+        if (match) {
+          parts.push(match[1].trim());
+          break;
+        }
+      } catch {
+        // File not found or unreadable – skip gracefully
       }
-    } catch {
-      // CLAUDE.md not found – skip gracefully
     }
 
     // Language-aware instructions

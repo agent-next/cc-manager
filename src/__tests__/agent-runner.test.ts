@@ -329,6 +329,62 @@ describe("AgentRunner", () => {
     assert.ok(prompt.length > 0);
   });
 
+  // ── buildSystemPrompt Development Rules source: AGENTS.md, then CLAUDE.md ──
+
+  function promptWithFiles(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), "test-rules-"));
+    try {
+      for (const [name, content] of Object.entries(files)) {
+        writeFileSync(join(dir, name), content);
+      }
+      return new AgentRunner().buildSystemPrompt(createTask("fix something"), dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("buildSystemPrompt reads Development Rules from AGENTS.md when CLAUDE.md only imports it", () => {
+    const prompt = promptWithFiles({
+      "AGENTS.md": "# Guide\n\n## Development Rules\n- Rule from AGENTS.md: keep diffs small\n\n## Testing\n- Run the suite\n",
+      "CLAUDE.md": "@AGENTS.md\n",
+    });
+    assert.ok(prompt.includes("- Rule from AGENTS.md: keep diffs small"), "should inject rules from AGENTS.md");
+  });
+
+  it("buildSystemPrompt reads Development Rules from CLAUDE.md when there is no AGENTS.md", () => {
+    const prompt = promptWithFiles({
+      "CLAUDE.md": "# Guide\n\n## Development Rules\n- Rule from CLAUDE.md: run the type check\n",
+    });
+    assert.ok(prompt.includes("- Rule from CLAUDE.md: run the type check"), "should inject rules from CLAUDE.md");
+  });
+
+  it("buildSystemPrompt falls back to CLAUDE.md when AGENTS.md has no Development Rules", () => {
+    const prompt = promptWithFiles({
+      "AGENTS.md": "# Guide\n\n## Build\n- Build note from AGENTS.md\n",
+      "CLAUDE.md": "# Guide\n\n## Development Rules\n- Rule from CLAUDE.md fallback: add tests\n",
+    });
+    assert.ok(prompt.includes("- Rule from CLAUDE.md fallback: add tests"), "should inject rules from CLAUDE.md");
+  });
+
+  it("buildSystemPrompt injects no rules when neither AGENTS.md nor CLAUDE.md has Development Rules", () => {
+    const prompt = promptWithFiles({
+      "AGENTS.md": "# Guide\n\n## Build\n- Build note from AGENTS.md\n",
+      "CLAUDE.md": "# Guide\n\n## Notes\n- Note from CLAUDE.md\n",
+    });
+    assert.ok(!prompt.includes("Build note from AGENTS.md"), "should not inject AGENTS.md text");
+    assert.ok(!prompt.includes("Note from CLAUDE.md"), "should not inject CLAUDE.md text");
+    assert.ok(prompt.includes("git add -A"), "should still include commit instruction");
+  });
+
+  it("buildSystemPrompt prefers AGENTS.md Development Rules when both files have them", () => {
+    const prompt = promptWithFiles({
+      "AGENTS.md": "# Guide\n\n## Development Rules\n- Rule from AGENTS.md: preferred\n",
+      "CLAUDE.md": "# Guide\n\n## Development Rules\n- Rule from CLAUDE.md: superseded\n",
+    });
+    assert.ok(prompt.includes("- Rule from AGENTS.md: preferred"), "should inject rules from AGENTS.md");
+    assert.ok(!prompt.includes("Rule from CLAUDE.md: superseded"), "should not also inject rules from CLAUDE.md");
+  });
+
   // ── pushEvent cap ──
 
   it("pushEvent caps events at 200", () => {
