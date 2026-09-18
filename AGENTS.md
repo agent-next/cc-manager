@@ -1,23 +1,186 @@
 # Repository Guidelines
 
+## Project Overview
+Multi-agent orchestrator that runs parallel Claude Code agents in git worktrees. Tasks submitted via REST API, monitored via SSE, agents auto-commit and merge to main.
+
 ## Project Structure & Module Organization
 `src/` contains the TypeScript application code. Core runtime modules include `scheduler.ts`, `agent-runner.ts`, `store.ts`, `server.ts`, and the CLI entrypoints `index.ts` and `cli.ts`. Tests live in `src/__tests__/` and follow the source module names, for example `src/__tests__/scheduler.test.ts`. The web dashboard is a single static file at `src/web/index.html`; built output goes to `dist/`. Longer-form design and API docs live in `docs/`, and `ARCHITECTURE.md` explains the dependency flow between modules. Runtime artifacts such as `.cc-manager.db` and `.worktrees/` should not be treated as source.
+
+### Architecture
+- **src/index.ts** — Server entry point (Commander.js)
+- **src/cli.ts** — CLI client commands (submit, list, status, diff, logs, stats, workers, search, cancel, retry, watch)
+- **src/server.ts** — Hono REST API + SSE
+- **src/scheduler.ts** — Task queue, priority dispatch, retry logic, stale worker recovery
+- **src/agent-runner.ts** — Multi-agent CLI spawning (Claude, Codex, generic), cost tracking, code review
+  - Hybrid architecture: Claude Agent SDK (`claude-sdk`) for programmatic control + CLI spawning for all agents
+- **src/worktree-pool.ts** — Git worktree lifecycle, parallel init, merge
+- **src/store.ts** — SQLite persistence (better-sqlite3, WAL mode)
+- **src/types.ts** — Shared TypeScript types
+- **src/pipeline.ts** — 5-stage autonomous pipeline (research→decompose→execute→verify→done)
+- **src/pipeline-types.ts** — Pipeline type definitions
+- **src/pipeline-store.ts** — Pipeline run persistence
+- **src/task-classifier.ts** — Task routing (quick/standard/deep → model/agent/contextProfile)
+- **src/logger.ts** — Structured JSON logger
+- **src/web/index.html** — Dashboard (vanilla HTML/JS, dark theme)
+
+## Tech Stack
+- TypeScript 5 / Node.js ESM
+- Agent integration via `child_process.spawn` (supports Claude CLI, Codex CLI, any terminal agent)
+- `hono` + `@hono/node-server`
+- `better-sqlite3` (WAL mode)
+- `commander` for CLI
 
 ## Build, Test, and Development Commands
 Use Node.js 20+.
 
 - `npm install`: install dependencies and enable the repo’s git hooks via `prepare`.
 - `npm run dev`: run the app from source with `tsx`.
-- `npm run build`: compile TypeScript to `dist/` and copy the web UI asset.
-- `npm test`: run the Node test runner against `src/__tests__/*.test.ts`.
+- `npm run build`: compile TypeScript to `dist/` and copy the web UI asset (`src/web/index.html` → `dist/web/index.html`).
+- `npm test`: run the Node test runner against `src/__tests__/*.test.ts` (`node --import tsx --test src/__tests__/*.test.ts`; 372 tests across 10 suites).
 - `npx tsc --noEmit`: run the strict type check used by CI and the pre-commit hook.
-- `npm run start -- --repo /path/to/repo`: run the built server locally.
+- `npm run start -- --repo /path/to/repo`: run the built server locally, e.g. `node dist/index.js --repo /path/to/repo --workers 5 --port 8080`.
 
 ## Coding Style & Naming Conventions
 Follow `.editorconfig`: UTF-8, LF, and 2-space indentation. Keep source in TypeScript under `src/`; do not add plain `.js` source files there. Use Node ESM import paths with explicit `.js` extensions, for example `import { Store } from './store.js';`. Match existing file naming: kebab-case module files and `*.test.ts` for tests. Prefer explicit types and keep `strict`-mode compatibility. For the dashboard, keep `src/web/index.html` framework-free and self-contained.
 
+## Development Rules
+- Run `npx tsc` after changes to verify compilation
+- Only modify core files — do NOT create standalone utility modules
+- Core files: server.ts, scheduler.ts, store.ts, agent-runner.ts, worktree-pool.ts, index.ts, cli.ts, types.ts, logger.ts
+- Keep changes minimal and focused — one concern per change
+- Always `git add -A && git commit` after successful changes
+
 ## Testing Guidelines
 Add or update targeted tests in `src/__tests__/` whenever behavior changes. Keep test filenames aligned with the module under test and cover both success and failure paths for scheduler, store, server, or worktree behavior. Before opening a PR, run `npx tsc --noEmit`, `npm test`, and `npm run build` if your change affects runtime packaging.
 
+### Test Files
+- `src/__tests__/store.test.ts` — Store CRUD, search, cleanup, errors (BDD-style)
+- `src/__tests__/worktree-pool.test.ts` — WorktreePool lifecycle
+- `src/__tests__/scheduler.test.ts` — Submit, cancel, stats, queue position
+- `src/__tests__/agent-runner.test.ts` — Cost estimation, code review, system prompt, CLI dispatch
+- `src/__tests__/server.test.ts` — API input validation (prompt, timeout, priority, tags, webhookUrl)
+- `src/__tests__/cli.test.ts` — CLI commands (all 12), fetch mocking, output formatting, error handling
+- `src/__tests__/logger.test.ts` — Structured logger: JSON format, level filtering, stream routing
+- `src/__tests__/index.test.ts` — Entry point validation: repo, workers, port, system prompt (subprocess)
+
 ## Commit & Pull Request Guidelines
 Recent history uses Conventional Commits, usually with a scope: `feat(scheduler): ...`, `fix(pipeline): ...`, `docs: ...`. Keep commits focused and descriptive. PRs should answer: what changed, why it changed, and how to test it. Follow `.github/pull_request_template.md`: confirm tests pass, types compile, `console.log` calls are removed, and docs are updated when needed.
+
+## Agent Flywheel Strategy
+The cc-manager improves itself by running agents against its own codebase.
+
+### Current Status: NOT WORKING (v0.1.7)
+Two self-hosting runs (v0.1.5, v0.1.6) achieved only 43-50% commit rate. All "successful" runs required manual fixes. The flywheel loop does not yet produce reliable, mergeable code autonomously.
+
+**Root causes identified**:
+- Agents exit 0 without committing (fixed in v0.1.7: F1 empty commit detection)
+- Complex files (scheduler.ts 618 LOC) always fail multi-point integration
+- System prompt commit instruction too weak (fixed in v0.1.7: F2 CRITICAL warning)
+
+### Proven Best Practices
+- **240s timeout** — sweet spot (120s = 80% failure, 180s = occasional timeout)
+- **One file per task** — prevents merge conflicts between concurrent agents
+- **Simple prompts** — 3-4 sentences max, one clear objective
+- **New files > modifications** — creation has ~100% success rate
+- **No overlapping edits** — assign different files to concurrent tasks
+
+### Task Quality Rules
+- Every task must directly improve cc-manager core functionality
+- No creating unused utility modules
+- Test compilation (`npx tsc`) in every task
+- Prefer additive changes (new methods) over rewrites
+
+## API Endpoints
+- `GET /api/stats` — Queue depth, worker count, cost breakdown
+- `GET /api/stats/daily` — Daily stats breakdown
+- `GET /api/tasks` — List tasks (supports ?status, ?limit, ?offset, ?tag filters)
+- `GET /api/tasks/search?q=keyword` — Search tasks by prompt/output
+- `GET /api/tasks/errors` — Recent failures
+- `GET /api/tasks/:id` — Full task detail (includes queue position)
+- `GET /api/tasks/:id/diff` — Git diff for completed task
+- `GET /api/tasks/:id/output` — Raw task output
+- `POST /api/tasks` — Submit task `{prompt, timeout?, maxBudget?, priority?, tags?, webhookUrl?}`
+- `POST /api/tasks/batch` — Submit multiple tasks
+- `POST /api/tasks/:id/retry` — Requeue a failed task
+- `DELETE /api/tasks/:id` — Cancel pending task
+- `DELETE /api/tasks/cleanup?days=30` — Remove old tasks
+- `GET /api/workers` — Worker pool status
+- `GET /api/events` — SSE stream (task_queued, task_started, task_progress, task_final)
+- `GET /api/health` — Health check
+- `GET /api/budget` — Budget status
+- `GET /api/insights` — Historical performance insights
+- `GET /api/evolution/log` — Self-evolution analysis history
+- `POST /api/evolution/analyze` — Trigger round analysis `{taskIds: string[]}`
+- `GET /api/docs` — API documentation
+
+## Task Lifecycle
+```
+pending → running → success (branch merged to main)
+                  → failed  (branch abandoned, may retry up to maxRetries)
+                  → timeout (AbortController fired)
+       → cancelled          (removed before worker assigned)
+```
+
+## Quality Pyramid (bottom-up)
+1. **Agent Quality** — System prompt with tsc check, post-execution build verification, output validation
+2. **Code Quality** — Type-safe unions (not bare strings), input validation, global error handling
+3. **Module Quality** — Unit tests, BDD specs, transaction support
+4. **Integration Quality** — E2E tests, flywheel validation, merge conflict handling
+5. **Product Quality** — Dashboard UX, API consistency, real-time updates
+
+## Harness Engineering Principles (from OpenAI, critically adapted)
+- **Failures are orchestration problems, not reasoning problems** — focus on harness quality, not model prompting tricks
+- **Documentation as executable specification** — AGENTS.md is the agent's single source of truth, enforced mechanically
+- **Fewer general tools > many specialized tools** — agents have bash + files, no tool proliferation
+- **Context is a managed resource with budgets** — enforce prompt size limits, token budgets per task
+- **Error trace retention** — remember failed approaches, inject anti-patterns into future task context
+- **Layered dependency enforcement** — types → store → scheduler → server → dashboard (no reverse imports)
+- **NOT copied**: MCP protocol, filesystem-as-memory, logits masking, over-engineered state machines
+
+## Self-Evolution System (R21+)
+- **Types**: CodeAnalysis, ReviewResult, EvolutionEntry in types.ts
+- **Persistence**: evolution_log table in store.ts (saveEvolution, getEvolutionLog, getLatestEvolution)
+- **Analysis**: scheduler.analyzeRound() computes per-round metrics and patterns
+- **Review**: AgentRunner.reviewDiff() does heuristic code review on diffs
+- **API**: GET /api/evolution/log, POST /api/evolution/analyze
+
+## Long-Term Vision
+1. **Self-improving flywheel** — auto-analyze code, generate tasks, execute, review, learn
+2. **External review gate** — pluggable reviewer (Codex, Gemini) as quality gate before merge
+3. **Smart scheduling** — predict cost/duration from historical data
+4. **Dynamic system prompt** — inject CLAUDE.md + error history into agent context
+5. **Complete test coverage** — all core modules have BDD-style unit tests
+6. **Multi-repo support** — manage agents across multiple repositories
+
+## Flywheel Management (PDCA)
+- **Plan**: Each round targets specific quality layer or feature area
+- **Do**: 5 agents execute with one-file-per-task isolation
+- **Check**: Reflect on success rate, cost, functional value, architectural contribution
+- **Act**: Adjust timeout, prompt style, task scope based on data
+
+### Quality Evaluation (not just success rate)
+- **Functional value** — Does each task add real capability?
+- **Task design** — Is the prompt well-scoped and achievable?
+- **Architectural contribution** — Does it improve structure, not just add features?
+- **Test coverage** — Are new features tested?
+- **Code consistency** — Does the code maintain unified style?
+- **Technical debt** — Are we creating debt or paying it down?
+
+## Repository
+- **GitHub**: `agent-next/cc-manager` (private)
+- **Version**: v0.1.7
+
+## Security Notes
+- **No authentication**: cc-manager has no auth. It is a local dev tool — do NOT expose to the public internet.
+- **CORS is open**: `cors()` middleware allows all origins. If deploying behind a reverse proxy, restrict at the proxy level.
+- **Webhook SSRF**: Webhook URLs are validated to block private/loopback IPs, but DNS rebinding is not prevented. Only use trusted webhook endpoints.
+- **Rate limiting**: Uses a static key (`"direct"`) — does not trust `x-forwarded-for`. If behind a reverse proxy, add `--trust-proxy` support.
+
+## Known Gotchas
+- `getDailyStats()` returns `{total, success, cost, successRate}` — do NOT use `count` (old field name, causes silent breakage in dashboard + scheduler)
+- Dashboard `esc()` must escape single quotes (`&#39;`) for onclick handlers
+- Claude CLI spawning: must clear `CLAUDECODE` and `CLAUDE_CODE_*` env vars to prevent nesting
+- `POST /api/tasks` accepts `agent` field: `"claude"` (CLI), `"claude-sdk"` (Agent SDK), `"codex"`, or any CLI command string
+- `"claude-sdk"` uses programmatic `query()` API with structured events, AbortController, precise cost tracking
+- `"claude"` uses `claude -p --dangerously-skip-permissions --output-format stream-json` CLI spawning
+- Task IDs are 16-char hex (v0.1.0+). Store uses INSERT OR IGNORE + UPDATE to prevent collision overwrites.
